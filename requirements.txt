@@ -1,4 +1,4 @@
-streamlit
+streamlit>=1.35
 requests
 langchain-core
 langchain-community
@@ -11,6 +11,7 @@ chromadb
 sentence-transformers
 pypdf
 python-pptx
+python-docx
 reportlab
 gTTS
 streamlit-mic-recorder
