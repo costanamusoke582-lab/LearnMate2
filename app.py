@@ -23,7 +23,7 @@ import streamlit as st
 from docx import Document as DocxDocument
 from groq import Groq as GroqClient
 from gtts import gTTS
-from langchain_chroma import Chroma
+from langchain_core.vectorstores import InMemoryVectorStore
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.documents import Document
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -461,15 +461,8 @@ def load_materials():
     indexed = get_indexed_filelist()
 
     if not files:
-        # Nothing to index: also clear any leftover index from an older version of the app.
-        shutil.rmtree(CHROMA_DIR, ignore_errors=True)
         return None, [], []
 
-    if os.path.exists(CHROMA_DIR) and files == indexed:
-        return Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings), files, []
-
-    # The files changed: start from a clean index so old chunks never mix with new ones.
-    shutil.rmtree(CHROMA_DIR, ignore_errors=True)
     docs, skipped = [], []
     for rel in files:
         try:
@@ -488,8 +481,7 @@ def load_materials():
         return None, files, skipped
 
     chunks = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150).split_documents(docs)
-    store = Chroma.from_documents(chunks, embeddings, persist_directory=CHROMA_DIR)
-    save_indexed_filelist(files)
+    store = InMemoryVectorStore.from_documents(chunks, embeddings)
     return store, files, skipped
 
 
@@ -574,16 +566,17 @@ def curriculum_topics(text):
 def get_session_store():
     """A private, in-memory index for files a teacher adds during this session only."""
     if st.session_state.get("session_vs") is None:
-        st.session_state.session_vs = Chroma(
-            collection_name=f"session_{uuid.uuid4().hex}",
-            embedding_function=get_embeddings(),
-        )
+        st.session_state.session_vs = InMemoryVectorStore(get_embeddings())
     return st.session_state.session_vs
 
 
 def retrieve(query, class_level, k=4):
     """Best matching notes for this class (plus notes marked for everyone)."""
-    flt = {"level": {"$in": [class_level, "ALL"]}}
+    allowed = {class_level, "ALL"}
+
+    def flt(doc):
+        return doc.metadata.get("level") in allowed
+
     scored = []
     for store in (_base_vs, st.session_state.get("session_vs")):
         if store is None:
@@ -592,7 +585,7 @@ def retrieve(query, class_level, k=4):
             scored.extend(store.similarity_search_with_score(query, k=k, filter=flt))
         except Exception as e:
             print(f"Search problem: {e}")
-    scored.sort(key=lambda pair: pair[1])
+    scored.sort(key=lambda pair: pair[1], reverse=True)
     return [doc for doc, _ in scored[:k]]
 
 
