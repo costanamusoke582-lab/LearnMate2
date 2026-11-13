@@ -1,0 +1,15 @@
+streamlit>=1.35
+requests
+langchain-core
+langchain-community
+langchain-text-splitters
+langchain-huggingface
+langchain-groq
+groq
+sentence-transformers
+pypdf
+python-pptx
+python-docx
+reportlab
+gTTS
+streamlit-mic-recorder
