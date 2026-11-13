@@ -61,10 +61,7 @@ WIKI_API = "https://en.wikipedia.org/w/api.php"
 TEACHER_PIN = os.getenv("TEACHER_PIN", "")
 
 # Links shown in the sidebar. Edit this list to add or remove websites.
-LIBRARY_LINKS = [
-    ("📘 NCDC Learning Resources", "https://ncdc.go.ug/resources"),
-    ("📝 Digital Teachers (notes and revision)", "https://digitalteachers.co.ug/"),
-]
+LIBRARY_LINKS = []  # no outside websites are shown to learners; add ("Label", "https://...") pairs to show some
 
 CLASSES = [f"P{i}" for i in range(1, 8)] + [f"S{i}" for i in range(1, 7)]
 
@@ -726,6 +723,13 @@ api_key = os.getenv("GROQ_API_KEY", "")
 TEACHER_INVITE_CODE = os.getenv("TEACHER_INVITE_CODE", "")
 ACCOUNTS_ON = db.enabled()
 
+if ACCOUNTS_ON and not all(hasattr(db, n) for n in ("list_assignments", "attempt_rows", "submit_assignment")):
+    st.error(
+        "The file db.py on GitHub is an old version. Upload the newest db.py to the main folder of the "
+        "repository (replace the existing db.py, do not add a second copy), then reboot the app."
+    )
+    st.stop()
+
 
 def current_user():
     return st.session_state.get("user")
@@ -951,10 +955,11 @@ with st.sidebar:
     )
     slow_voice = st.checkbox("Speak slowly", value=False)
 
-    st.divider()
-    st.header("📚 More learning websites")
-    for _label, _url in LIBRARY_LINKS:
-        st.link_button(_label, _url)
+    if LIBRARY_LINKS:
+        st.divider()
+        st.header("📚 More learning websites")
+        for _label, _url in LIBRARY_LINKS:
+            st.link_button(_label, _url)
 
     if _material_files or st.session_state.session_files:
         st.caption(f"📖 Learning notes ready: {len(_material_files) + len(set(st.session_state.session_files))} files")
