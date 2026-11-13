@@ -70,7 +70,11 @@ def _rest(method, table, params=None, json=None, prefer=None):
         raise DBError("Could not reach the database.") from e
     if resp.status_code >= 300:
         print(f"Database error {resp.status_code} on {method} {table}: {resp.text[:300]}")
-        raise DBError(f"Database error {resp.status_code}")
+        try:
+            detail = str(resp.json().get("message") or "")[:160]
+        except Exception:
+            detail = ""
+        raise DBError(f"{resp.status_code} on {table}: {detail}".strip())
     return resp.json() if resp.content else []
 
 
@@ -218,15 +222,19 @@ def list_learners():
 # ----------------------------------------------------------------------------
 # Quiz results
 # ----------------------------------------------------------------------------
-def save_result(user, subject, topic, score, total):
+def save_result(user, subject, topic, score, total, details=None, class_level=None):
+    """details = list of {question, options, correct, picked, explanation} for each question.
+    Quizzes taken by teachers are saved too, but marked as tests so they can be hidden."""
     _rest("POST", "quiz_results", json={
         "user_id": user["id"],
         "nickname": user["nickname"],
-        "class_level": user["class_level"],
+        "class_level": class_level or user["class_level"],
         "subject": subject,
         "topic": topic,
         "score": int(score),
         "total": int(total),
+        "details": details or [],
+        "is_test": user.get("role") == "teacher",
     })
 
 
@@ -238,10 +246,102 @@ def get_results(user_id):
     })
 
 
-def all_results(limit=5000):
+def all_results(limit=2000):
     return _rest("GET", "quiz_results", params={
-        "select": "nickname,class_level,subject,topic,score,total,created_at",
+        "select": "nickname,class_level,subject,topic,score,total,created_at,details,is_test",
         "order": "created_at.desc", "limit": str(limit),
+    })
+
+
+def _safe_cell(value):
+    """Stops spreadsheet programs from treating text as a formula."""
+    text = "" if value is None else str(value)
+    return "'" + text if text[:1] in ("=", "+", "-", "@") else text
+
+
+def attempt_rows(results):
+    """One row per question answered, with the learner's answer, the correct answer and the explanation."""
+    letters = "ABCD"
+    out = []
+    for r in results:
+        base = {
+            "Date": str(r.get("created_at", ""))[:16].replace("T", " "),
+            "Class": r.get("class_level", ""),
+            "Learner": r.get("nickname", ""),
+            "Subject": r.get("subject", ""),
+            "Topic": _safe_cell(r.get("topic", "")),
+            "Quiz score": f"{r.get('score', 0)}/{r.get('total', 0)}",
+        }
+        details = r.get("details") or []
+        if not details:
+            out.append({**base, "Question no.": "", "Question": "(question details were not saved for this quiz)",
+                        "Learner's answer": "", "Correct answer": "", "Result": "", "Explanation": ""})
+            continue
+        for i, d in enumerate(details, 1):
+            opts = d.get("options") or []
+
+            def opt(ix):
+                if isinstance(ix, int) and 0 <= ix < len(opts):
+                    return _safe_cell(f"{letters[ix]}. {opts[ix]}")
+                return ""
+
+            picked, correct = d.get("picked"), d.get("correct")
+            out.append({
+                **base,
+                "Question no.": i,
+                "Question": _safe_cell(d.get("question", "")),
+                "Learner's answer": opt(picked),
+                "Correct answer": opt(correct),
+                "Result": "Correct" if picked == correct else "Wrong",
+                "Explanation": _safe_cell(d.get("explanation", "")),
+            })
+    return out
+
+
+# ----------------------------------------------------------------------------
+# Assignments
+# ----------------------------------------------------------------------------
+def create_assignments(title, instructions, subject, classes, due_date, teacher_id):
+    """One row per class, so each class's assignment can be tracked separately."""
+    rows = [{
+        "title": title, "instructions": instructions, "subject": subject,
+        "class_level": c, "due_date": due_date or None, "created_by": teacher_id,
+    } for c in classes]
+    _rest("POST", "assignments", json=rows)
+
+
+def list_assignments(class_level=None):
+    params = {"select": "*", "order": "created_at.desc", "limit": "500"}
+    if class_level:
+        params["class_level"] = f"eq.{class_level}"
+    return _rest("GET", "assignments", params=params)
+
+
+def delete_assignment(assignment_id):
+    _rest("DELETE", "assignments", params={"id": f"eq.{assignment_id}"})
+
+
+def my_submissions(user_id):
+    return _rest("GET", "submissions", params={
+        "user_id": f"eq.{user_id}", "select": "assignment_id,answer,submitted_at", "limit": "1000",
+    })
+
+
+def submit_assignment(assignment_id, user, answer):
+    _rest("POST", "submissions", params={"on_conflict": "assignment_id,user_id"}, json={
+        "assignment_id": assignment_id,
+        "user_id": user["id"],
+        "nickname": user["nickname"],
+        "class_level": user["class_level"],
+        "answer": answer,
+        "submitted_at": datetime.now(timezone.utc).isoformat(),
+    }, prefer="resolution=merge-duplicates")
+
+
+def list_submissions():
+    return _rest("GET", "submissions", params={
+        "select": "assignment_id,nickname,class_level,answer,submitted_at",
+        "order": "submitted_at.asc", "limit": "5000",
     })
 
 

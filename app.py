@@ -38,6 +38,8 @@ from reportlab.platypus import Image as RLImage
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 from streamlit_mic_recorder import mic_recorder
 
+import datetime
+
 import db
 import pandas as pd
 
@@ -356,7 +358,7 @@ HOW TO TEACH
 - Keep answers under about {words} words. Use short paragraphs or a few bullet points.
 - Use familiar Ugandan examples (for example shillings, matooke, boda bodas, school life) and British spelling.
 - Be accurate. If you are not sure, say so honestly. Never make up facts, numbers or sources.
-- If learning notes are given below, use them first and keep to the {class_level} level.
+- If learning notes are given below, they are this school's own material for the class. Base your answer on them first, stay close to their wording and examples, and add general knowledge only to fill small gaps. Keep to the {class_level} level.
 - Finish with one short question that checks understanding or invites the learner to try.
 {picture_rule}
 
@@ -437,7 +439,8 @@ def list_material_files():
     for root, _, files in os.walk(MATERIALS_DIR):
         for fn in files:
             full = os.path.join(root, fn)
-            if fn.lower().endswith(SUPPORTED_EXTS) and os.path.getsize(full) > 0:
+            if (fn.lower().endswith(SUPPORTED_EXTS) and os.path.getsize(full) > 0
+                    and not fn.lower().startswith("readme")):
                 found.append(os.path.relpath(full, MATERIALS_DIR).replace(os.sep, "/"))
     return sorted(found)
 
@@ -613,6 +616,7 @@ def retrieve(query, class_level, k=4):
         return doc.metadata.get("level") in allowed
 
     scored = []
+    st.session_state["search_error"] = ""
     for store in (_base_vs, st.session_state.get("session_vs")):
         if store is None:
             continue
@@ -620,6 +624,7 @@ def retrieve(query, class_level, k=4):
             scored.extend(store.similarity_search_with_score(query, k=k, filter=flt))
         except Exception as e:
             print(f"Search problem: {e}")
+            st.session_state["search_error"] = str(e)[:200]
     scored.sort(key=lambda pair: pair[1], reverse=True)
     return [doc for doc, _ in scored[:k]]
 
@@ -1166,17 +1171,27 @@ def render_quiz_tab():
                         "total": len(quiz),
                     }
                 )
-                if ACCOUNTS_ON and current_user() and not is_teacher():
+                if ACCOUNTS_ON and current_user():
+                    details = [
+                        {"question": q["question"], "options": q["options"], "correct": q["correct"],
+                         "picked": p, "explanation": q["explanation"]}
+                        for q, p in zip(quiz, picked)
+                    ]
                     try:
-                        db.save_result(current_user(), subject, topic.strip() or "General", score, len(quiz))
+                        db.save_result(
+                            current_user(), subject, topic.strip() or "General", score, len(quiz),
+                            details=details, class_level=class_level,
+                        )
                     except Exception as e:
                         print(f"Could not save quiz result: {e}")
-                        st.session_state.save_failed = True
+                        st.session_state.save_failed = str(e)[:200]
                 st.rerun()
 
     elif quiz and result is not None:
-        if st.session_state.pop("save_failed", False):
+        _save_error = st.session_state.pop("save_failed", None)
+        if _save_error:
             st.warning("Your score was not saved this time. Please tell your teacher.")
+            st.caption(f"Technical details: {_save_error}")
         st.success(f"You got {result['score']} out of {result['total']}!")
         st.write(praise(result["score"], result["total"]))
         for i, (q, p) in enumerate(zip(quiz, result["picked"])):
@@ -1213,16 +1228,140 @@ ALL_SUBJECTS = sorted(set(PRIMARY_SUBJECTS + SECONDARY_SUBJECTS))
 MAX_NOTE_MB = 20
 
 
+def render_teacher_assignments():
+    st.markdown("#### Write a new assignment")
+    with st.form("assignment_form", clear_on_submit=True):
+        a_title = st.text_input("Title", placeholder="For example: Fractions homework")
+        a_subject = st.selectbox("Subject", ALL_SUBJECTS, key="asg_subject")
+        a_classes = st.multiselect("Send to these classes", CLASSES, format_func=class_label)
+        a_text = st.text_area("Instructions / questions", height=160)
+        has_due = st.checkbox("Set a due date")
+        a_due = st.date_input("Due date", value=datetime.date.today() + datetime.timedelta(days=7))
+        go = st.form_submit_button("Send assignment")
+    if go:
+        if not a_title.strip() or not a_text.strip() or not a_classes:
+            st.warning("Please add a title, the instructions, and at least one class.")
+        else:
+            try:
+                db.create_assignments(
+                    a_title.strip(), a_text.strip(), a_subject, a_classes,
+                    a_due.isoformat() if has_due else None, current_user()["id"],
+                )
+                st.session_state.flash = f"Assignment sent to {', '.join(a_classes)}."
+                st.rerun()
+            except db.DBError as e:
+                st.error("Could not send the assignment.")
+                st.caption(f"Technical details: {e}")
+                st.caption("If this mentions a missing table, run supabase_setup.sql again in Supabase.")
+
+    st.markdown("#### Assignments sent")
+    try:
+        items = db.list_assignments()
+        subs = db.list_submissions()
+        learners = db.list_learners()
+    except db.DBError as e:
+        st.error("Could not load assignments.")
+        st.caption(f"Technical details: {e}")
+        return
+    if not items:
+        st.caption("No assignments yet.")
+        return
+    by_assignment = {}
+    for s in subs:
+        by_assignment.setdefault(s["assignment_id"], []).append(s)
+    for a in items:
+        sent = by_assignment.get(a["id"], [])
+        in_class = [p["nickname"] for p in learners if p["class_level"] == a["class_level"]]
+        done_names = {s["nickname"] for s in sent}
+        due = f" - due {a['due_date']}" if a.get("due_date") else ""
+        label = f"{a['title']} - {a['class_level']} - {a['subject']}{due}  ({len(sent)}/{len(in_class)} submitted)"
+        with st.expander(label):
+            st.write(a["instructions"])
+            if sent:
+                st.markdown("**Submitted**")
+                for s in sent:
+                    st.markdown(f"- **{s['nickname']}** ({str(s['submitted_at'])[:16].replace('T', ' ')}): {s['answer']}")
+            waiting = [n for n in in_class if n not in done_names]
+            if waiting:
+                st.markdown("**Not yet submitted:** " + ", ".join(waiting))
+            if st.button("Delete this assignment", key=f"delasg_{a['id']}"):
+                try:
+                    db.delete_assignment(a["id"])
+                    st.session_state.flash = "Assignment deleted."
+                    st.rerun()
+                except db.DBError:
+                    st.error("Could not delete the assignment.")
+
+
+def load_learner_assignments(user):
+    """Returns (pending, done, error_text) for a learner."""
+    try:
+        items = db.list_assignments(user["class_level"])
+        mine = {s["assignment_id"]: s for s in db.my_submissions(user["id"])}
+    except db.DBError as e:
+        return [], [], str(e)
+    pending = [a for a in items if a["id"] not in mine]
+    done = [(a, mine[a["id"]]) for a in items if a["id"] in mine]
+    return pending, done, ""
+
+
+def render_assignments_tab(pending, done, error):
+    st.subheader("📋 My assignments")
+    flash = st.session_state.pop("flash", None)
+    if flash:
+        st.success(flash)
+    if error:
+        st.error("Sorry, I could not load your assignments right now.")
+        st.caption(f"Technical details: {error}")
+        return
+    st.markdown(f"### ⏳ Pending ({len(pending)})")
+    if not pending:
+        st.write("🎉 You have no pending assignments.")
+    today = datetime.date.today().isoformat()
+    for a in pending:
+        with st.container(border=True):
+            st.markdown(f"**{a['title']}** - {a['subject']}")
+            if a.get("due_date"):
+                late = " ⚠️ overdue" if str(a["due_date"]) < today else ""
+                st.caption(f"Due: {a['due_date']}{late}")
+            st.write(a["instructions"])
+            with st.form(f"submit_{a['id']}", clear_on_submit=True):
+                answer = st.text_area("Your answer", height=120, key=f"ans_{a['id']}")
+                go = st.form_submit_button("Submit my answer")
+            if go:
+                if not answer.strip():
+                    st.warning("Please write your answer first.")
+                else:
+                    try:
+                        db.submit_assignment(a["id"], current_user(), answer.strip())
+                        st.session_state.flash = f"Submitted: {a['title']}. Well done!"
+                        st.rerun()
+                    except db.DBError as e:
+                        st.error("Sorry, your answer was not sent. Please try again.")
+                        st.caption(f"Technical details: {e}")
+    st.markdown(f"### ✅ Done ({len(done)})")
+    for a, s in done:
+        with st.expander(f"{a['title']} - {a['subject']}"):
+            st.caption(f"Submitted {str(s['submitted_at'])[:16].replace('T', ' ')}")
+            st.write(s["answer"])
+
+
 def render_teacher_tab():
     st.subheader("👩‍🏫 Teacher tools")
     flash = st.session_state.pop("flash", None)
     if flash:
         st.success(flash)
-    t_notes, t_results, t_people = st.tabs(["📚 Notes", "📊 Results", "🔑 Learner passwords"])
+    t_notes, t_assign, t_results, t_people = st.tabs(
+        ["📚 Notes", "📋 Assignments", "📊 Results", "🔑 Learner passwords"]
+    )
 
     with t_notes:
         st.markdown("#### Add notes")
         st.caption("Only upload material you have permission to use. Files must contain real text (not photos of pages).")
+        st.info(
+            f"The teacher uses notes only for the class chosen in the sidebar (now **{class_level}**) "
+            "plus notes marked \"All classes\". Change the class in the sidebar to test other classes."
+        )
         if _skipped_files:
             st.warning("These notes had no readable text and are not used: " + ", ".join(_skipped_files))
         with st.form("note_upload", clear_on_submit=True):
@@ -1266,17 +1405,47 @@ def render_teacher_tab():
                 except db.DBError:
                     st.error("Could not delete that note.")
 
+        st.markdown("#### 🔍 Check that the teacher can read my notes")
+        chk1, chk2 = st.columns(2)
+        chk_class = chk1.selectbox("Class", CLASSES, index=CLASSES.index(class_level), key="chk_class")
+        chk_query = chk2.text_input("Type a topic or question from the note", key="chk_query")
+        if chk_query.strip():
+            hits = retrieve(chk_query, chk_class, k=3)
+            if st.session_state.get("search_error"):
+                st.error("The search had a problem: " + st.session_state["search_error"])
+            elif not hits:
+                st.warning(
+                    f"Nothing found for {chk_class}. Check that the note's class is {chk_class} or \"All classes\", "
+                    "that it is not listed as unreadable above, and that your words appear in the note."
+                )
+            else:
+                st.success(f"Found {len(hits)} matching passage(s). The teacher will use these:")
+                for h in hits:
+                    st.markdown(f"**{h.metadata.get('source', 'notes')}** ({h.metadata.get('level', '?')})")
+                    st.caption(h.page_content[:300].replace("\n", " ") + "...")
+
+    with t_assign:
+        render_teacher_assignments()
+
     with t_results:
         try:
             rows = db.all_results()
-        except db.DBError:
+        except db.DBError as e:
             rows = []
             st.error("Could not load results.")
+            st.caption(f"Technical details: {e}")
+            st.caption("If this mentions a missing column or table, run supabase_setup.sql again in Supabase.")
+        include_tests = st.checkbox("Include teacher test quizzes", value=False, key="res_tests")
+        hidden_tests = sum(1 for r in rows if r.get("is_test"))
+        if not include_tests:
+            rows = [r for r in rows if not r.get("is_test")]
+        if hidden_tests and not include_tests:
+            st.caption(f"{hidden_tests} quiz(es) taken by teachers are hidden. Tick the box above to see them.")
         if not rows:
             st.caption("No quiz results yet.")
         else:
             df = pd.DataFrame(rows)
-            df["percent"] = (df["score"] / df["total"] * 100).round(0)
+            df["percent"] = (df["score"] / df["total"].where(df["total"] > 0) * 100).round(0)
             f1, f2 = st.columns(2)
             pick_class = f1.selectbox("Class", ["All"] + CLASSES, key="res_class")
             pick_subject = f2.selectbox("Subject", ["All"] + ALL_SUBJECTS, key="res_subject")
@@ -1299,11 +1468,15 @@ def render_teacher_tab():
                                      "quizzes": "Quizzes", "average_percent": "Average %"})
                 )
                 st.dataframe(summary, use_container_width=True, hide_index=True)
-                detail = df[["created_at", "class_level", "nickname", "subject", "topic", "score", "total"]].copy()
-                detail["created_at"] = detail["created_at"].astype(str).str[:16].str.replace("T", " ")
+
+                attempts = pd.DataFrame(db.attempt_rows(df.to_dict("records")))
+                st.markdown("#### Questions, answers and corrections")
+                st.caption("One row per question. Older quizzes taken before this feature have no question details.")
+                st.dataframe(attempts, use_container_width=True, hide_index=True)
                 st.download_button(
-                    "📥 Download results (CSV)", detail.to_csv(index=False).encode("utf-8"),
-                    "LearnMate_Results.csv", "text/csv",
+                    "📥 Download results with questions and corrections (CSV)",
+                    attempts.to_csv(index=False).encode("utf-8-sig"),
+                    "LearnMate_Results_With_Corrections.csv", "text/csv",
                 )
 
     with t_people:
@@ -1338,6 +1511,14 @@ if ACCOUNTS_ON and is_teacher():
     )
     with tab_teacher:
         render_teacher_tab()
+elif ACCOUNTS_ON and current_user():
+    _pending, _done, _asg_error = load_learner_assignments(current_user())
+    _asg_label = f"📋 Assignments ({len(_pending)})" if _pending else "📋 Assignments"
+    if _pending:
+        st.warning(f"📋 You have {len(_pending)} pending assignment(s). Open the Assignments tab to see them.")
+    tab_learn, tab_quiz, tab_assign = st.tabs(["💬 Learn with your teacher", "📝 Quiz time", _asg_label])
+    with tab_assign:
+        render_assignments_tab(_pending, _done, _asg_error)
 else:
     tab_learn, tab_quiz = st.tabs(["💬 Learn with your teacher", "📝 Quiz time"])
 with tab_learn:
