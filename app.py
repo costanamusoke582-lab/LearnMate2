@@ -44,7 +44,9 @@ import pandas as pd
 # ----------------------------------------------------------------------------
 # CONFIGURATION
 # ----------------------------------------------------------------------------
-GROQ_MODEL = "llama-3.3-70b-versatile"
+# Groq retired llama-3.3-70b-versatile on 16 Aug 2026. To switch models later without
+# editing code, add GROQ_MODEL = "model-name" in Streamlit Secrets.
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 WHISPER_MODEL = "whisper-large-v3"
 
 MATERIALS_DIR = "materials"          # learning notes, organised by class (see README)
@@ -245,7 +247,7 @@ def build_report_pdf(progress):
 # AI HELPERS
 # ----------------------------------------------------------------------------
 def get_llm(api_key, temperature=0.4):
-    return ChatGroq(model=GROQ_MODEL, api_key=api_key, temperature=temperature, max_tokens=1200)
+    return ChatGroq(model=GROQ_MODEL, api_key=api_key, temperature=temperature, max_tokens=2500)
 
 
 def transcribe_audio(audio_bytes, api_key):
