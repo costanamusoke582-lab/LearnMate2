@@ -138,52 +138,60 @@ def class_profile(c):
     return "17 to 19", 450
 
 
+ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+_FAVICON = os.path.join(ASSETS_DIR, "favicon.png")
 st.set_page_config(
-    page_title="LearnMate Classroom", layout="wide", initial_sidebar_state="expanded"
+    page_title="LearnMate Classroom",
+    page_icon=_FAVICON if os.path.exists(_FAVICON) else ":material/school:",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+_LOGO_FULL = os.path.join(ASSETS_DIR, "logo_full.png")
+_LOGO_MARK = os.path.join(ASSETS_DIR, "logo_mark.png")
+if os.path.exists(_LOGO_FULL) and hasattr(st, "logo"):
+    st.logo(_LOGO_FULL, icon_image=_LOGO_MARK if os.path.exists(_LOGO_MARK) else None, size="large")
+TEACHER_AVATAR = _LOGO_MARK if os.path.exists(_LOGO_MARK) else None
+
+# Brand colours, taken from the LearnMate logo.
+INK, LAGOON, AMBER, TERRA, CREAM, SAND, LINE = (
+    "#14303A", "#1F7A74", "#E9A23B", "#C0502F", "#FAF6EE", "#F1EADB", "#DCD2BC"
 )
 
 st.markdown(
     """
     <style>
-    html, body, [class*="css"] { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, sans-serif !important; }
-    .main .block-container { padding: 1.5rem 2rem 3rem 2rem; max-width: 1100px; background-color: #f8fafc; }
-    [data-testid="stSidebar"] {
-        background: linear-gradient(160deg, #f1f5f9 0%, #e2e8f0 100%) !important;
-        border-right: 1px solid #cbd5e1;
-    }
-    [data-testid="stSidebar"] * { color: #1e293b !important; }
-    [data-testid="stSidebar"] .stSelectbox label,
-    [data-testid="stSidebar"] .stTextInput label { color: #475569 !important; font-size: 0.75rem !important; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+    @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap');
+    html, body, [class*="css"], .stMarkdown, button, input, textarea { font-family: 'Nunito', -apple-system, 'Segoe UI', Roboto, sans-serif !important; }
+    .stApp { background: #FAF6EE; }
+    .main .block-container { padding: 1.5rem 2rem 3rem 2rem; max-width: 1100px; }
+    h1, h2, h3, h4 { color: #14303A !important; font-weight: 800 !important; letter-spacing: -0.01em; }
+    h1 { font-size: 2.2rem !important; }
+    [data-testid="stSidebar"] { background: #F1EADB !important; border-right: 1px solid #DCD2BC; }
+    [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
+        color: #1F7A74 !important; font-size: 0.85rem !important; text-transform: uppercase; letter-spacing: 0.08em; }
+    [data-testid="stSidebar"] label { color: #3D5560 !important; font-weight: 700 !important; }
     [data-testid="stSidebar"] [data-baseweb="select"] > div,
-    [data-testid="stSidebar"] [data-baseweb="input"] > div { background: #ffffff !important; border: 1px solid #cbd5e1 !important; border-radius: 8px !important; color: #1e293b !important; }
-    [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2,
-    [data-testid="stSidebar"] h3 { color: #0f172a !important; font-size: 0.85rem !important; font-weight: 700 !important; text-transform: uppercase; letter-spacing: 0.08em; }
-    [data-testid="stSidebar"] hr { border-color: #cbd5e1 !important; margin: 0.75rem 0 !important; }
-    [data-testid="stSidebar"] .stButton > button {
-        width: 100%; background: #4f46e5 !important;
-        border: 1px solid #4338ca !important; border-radius: 8px !important;
-        color: #ffffff !important; font-size: 0.85rem !important;
-        font-weight: 600; transition: all 0.2s;
-    }
-    [data-testid="stSidebar"] .stButton > button:hover {
-        background: #4338ca !important; color: #fff !important;
-        transform: translateY(-1px); box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);
-    }
-    h1 { font-size: 2.25rem !important; font-weight: 800 !important; color: #0f172a !important; letter-spacing: -0.02em; }
+    [data-testid="stSidebar"] [data-baseweb="input"] > div { background: #FFFCF5 !important; border: 1px solid #DCD2BC !important; border-radius: 10px !important; }
+    [data-testid="stSidebar"] hr { border-color: #DCD2BC !important; }
+    .stButton > button, .stDownloadButton > button, .stFormSubmitButton > button {
+        background: #1F7A74; color: #FFFFFF; border: 1px solid #1F7A74; border-radius: 10px; font-weight: 700; transition: all .15s; }
+    .stButton > button:hover, .stDownloadButton > button:hover, .stFormSubmitButton > button:hover {
+        background: #14303A; border-color: #14303A; color: #FFFFFF; box-shadow: 0 4px 12px rgba(20,48,58,.22); }
+    .stButton > button:focus-visible, .stFormSubmitButton > button:focus-visible { outline: 3px solid #E9A23B; outline-offset: 2px; }
+    .stTabs [data-baseweb="tab-list"] { gap: 6px; border-bottom: 2px solid #DCD2BC; }
+    .stTabs [data-baseweb="tab"] { font-weight: 700; color: #3D5560; }
+    .stTabs [aria-selected="true"] { color: #14303A; }
+    .stTabs [data-baseweb="tab-highlight"] { background-color: #E9A23B !important; height: 3px; }
     [data-testid="stChatMessage"] {
-        border-radius: 14px !important; padding: 1rem 1.25rem !important;
-        margin-bottom: 0.75rem !important; border: 1px solid #e2e8f0 !important;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05) !important;
-        background: #ffffff !important;
-        color: #334155 !important;
-        font-size: 1.02rem;
-    }
-    [data-testid="stChatInput"] textarea {
-        border-radius: 12px !important; border: 1.5px solid #cbd5e1 !important;
-        background: #ffffff !important; font-size: 1rem !important;
-        color: #0f172a !important;
-    }
-    [data-testid="stChatInput"] textarea:focus { border-color: #4f46e5 !important; }
+        border-radius: 14px !important; padding: 1rem 1.25rem !important; margin-bottom: .75rem !important;
+        border: 1px solid #DCD2BC !important; background: #FFFCF5 !important; color: #14303A !important;
+        box-shadow: 0 1px 3px rgba(20,48,58,.06) !important; font-size: 1.02rem; }
+    [data-testid="stChatInput"] textarea { border-radius: 12px !important; border: 1.5px solid #DCD2BC !important; background: #FFFCF5 !important; }
+    [data-testid="stChatInput"] textarea:focus { border-color: #1F7A74 !important; }
+    [data-testid="stAlert"] { border-radius: 12px; }
+    [data-testid="stAlertContainer"]:has([data-testid="stAlertContentInfo"]) { background: #E6F1EF !important; color: #14303A !important; }
+    [data-testid="stAlertContentInfo"] * { color: #14303A !important; }
+    [data-testid="stImage"] img { border-radius: 16px; }
     #MainMenu, footer { visibility: hidden; }
     </style>
     """,
@@ -747,12 +755,12 @@ def parse_quiz_json(text):
 def praise(score, total):
     ratio = score / total if total else 0
     if ratio == 1:
-        return "🌟 Perfect score! Wonderful work!"
+        return "Perfect score! Wonderful work!"
     if ratio >= 0.8:
-        return "🎉 Great job! You really know this topic."
+        return "Great job! You really know this topic."
     if ratio >= 0.5:
-        return "👍 Good try! A little more practice and you will have it."
-    return "💪 Keep going! Mistakes help us learn. Ask your teacher to explain the topic again, then try another quiz."
+        return "Good try! A little more practice and you will have it."
+    return "Keep going! Mistakes help us learn. Ask your teacher to explain the topic again, then try another quiz."
 
 
 # ----------------------------------------------------------------------------
@@ -784,7 +792,7 @@ api_key = os.getenv("GROQ_API_KEY", "")
 TEACHER_INVITE_CODE = os.getenv("TEACHER_INVITE_CODE", "")
 ACCOUNTS_ON = db.enabled()
 
-if ACCOUNTS_ON and not all(hasattr(db, n) for n in ("list_assignments", "attempt_rows", "submit_assignment")):
+if ACCOUNTS_ON and not all(hasattr(db, n) for n in ("list_assignments", "attempt_rows", "submit_assignment", "post_message", "start_session", "active_sessions_for")):
     st.error(
         "The file db.py on GitHub is an old version. Upload the newest db.py to the main folder of the "
         "repository (replace the existing db.py, do not add a second copy), then reboot the app."
@@ -843,8 +851,11 @@ def auth_gate():
     """Shows the log in / create account screen and stops the page until someone is signed in."""
     if not ACCOUNTS_ON or current_user():
         return
-    st.info("👋 Welcome! Log in, or create an account, to start learning. Please use a nickname, not your real name.")
-    tab_in, tab_new = st.tabs(["🔑 Log in", "✨ Create account"])
+    _banner = os.path.join(ASSETS_DIR, "login_banner.jpg")
+    if os.path.exists(_banner):
+        st.image(_banner, use_container_width=True)
+    st.info("Welcome! Log in, or create an account, to start learning. Please use a nickname, not your real name.", icon=":material/waving_hand:")
+    tab_in, tab_new = st.tabs([":material/login: Log in", ":material/person_add: Create account"])
 
     with tab_in:
         with st.form("login_form"):
@@ -901,7 +912,7 @@ def auth_gate():
     st.stop()
 
 
-st.title("🎓 LearnMate Classroom")
+st.title("LearnMate Classroom")
 st.caption("Your friendly teacher for primary and secondary school. Ask about your lessons, or try a quiz!")
 auth_gate()
 
@@ -913,7 +924,7 @@ def teacher_panel():
     """Session-only uploads. Hidden unless the TEACHER_PIN secret has been set."""
     if ACCOUNTS_ON or not TEACHER_PIN:
         return
-    with st.expander("🔒 For teachers and parents"):
+    with st.expander("For teachers and parents", icon=":material/lock:"):
         pin = st.text_input("PIN", type="password", key="teacher_pin")
         if not hmac.compare_digest(pin.encode(), TEACHER_PIN.encode()):
             return
@@ -971,9 +982,9 @@ with st.sidebar:
         _me = current_user()
         _who = "Teacher" if is_teacher() else _me["class_level"]
         st.success(f"Signed in: **{_me['nickname']}** ({_who})")
-        if st.button("🚪 Log out"):
+        if st.button("Log out", icon=":material/logout:"):
             log_out()
-    st.header("🎒 My class")
+    st.header(":material/school: My class")
     _lock_class = bool(ACCOUNTS_ON and current_user() and not is_teacher())
     _class_index = CLASSES.index(current_user()["class_level"]) if _lock_class else 4
     class_level = st.selectbox(
@@ -999,33 +1010,33 @@ with st.sidebar:
     else:
         topic = st.text_input("Topic (optional)", placeholder="For example: Fractions")
     if syllabus_text:
-        st.caption(f"✅ Syllabus loaded for {class_level} {subject}")
+        st.caption(f":material/check_circle: Syllabus loaded for {class_level} {subject}")
     else:
-        st.caption(f"ℹ️ No syllabus added for {class_level} {subject} yet. The teacher keeps to the {class_level} level.")
+        st.caption(f":material/info: No syllabus added for {class_level} {subject} yet. The teacher keeps to the {class_level} level.")
     show_pictures = st.checkbox("Show drawings and pictures", value=True)
 
-    if st.button("🆕 Start a new lesson"):
+    if st.button("Start a new lesson", icon=":material/add_circle:"):
         st.session_state.messages = []
         st.session_state.last_response = ""
         st.rerun()
 
     st.divider()
-    st.header("🎙️ Talk to your teacher")
+    st.header(":material/mic: Talk to your teacher")
     audio_input = mic_recorder(
-        start_prompt="🎤 Start talking", stop_prompt="⏹️ Stop and send", key="mic"
+        start_prompt="Start talking", stop_prompt="Stop and send", key="mic"
     )
     slow_voice = st.checkbox("Speak slowly", value=False)
 
     if LIBRARY_LINKS:
         st.divider()
-        st.header("📚 More learning websites")
+        st.header(":material/menu_book: More learning websites")
         for _label, _url in LIBRARY_LINKS:
             st.link_button(_label, _url)
 
     if _material_files or st.session_state.session_files:
-        st.caption(f"📖 Learning notes ready: {len(_material_files) + len(set(st.session_state.session_files))} files")
+        st.caption(f":material/auto_stories: Learning notes ready: {len(_material_files) + len(set(st.session_state.session_files))} files")
     else:
-        st.caption("📖 No learning notes added yet. Your teacher will use general knowledge.")
+        st.caption(":material/auto_stories: No learning notes added yet. Your teacher will use general knowledge.")
 
     st.divider()
     st.info("Feeling worried or unsafe? Tell a trusted adult. You can also call **116** (free) - the Uganda Child Helpline.")
@@ -1038,15 +1049,15 @@ with st.sidebar:
 # TAB 1: LEARN
 # ----------------------------------------------------------------------------
 def render_message(msg):
-    with st.chat_message(msg["role"]):
+    with st.chat_message(msg["role"], avatar=TEACHER_AVATAR if msg["role"] == "assistant" else None):
         st.markdown(msg["content"])
         if msg.get("svg"):
             st.markdown(svg_to_html(msg["svg"]), unsafe_allow_html=True)
-            st.caption("✏️ Drawn by your teacher")
+            st.caption(":material/draw: Drawn by your teacher")
         if msg.get("image_url"):
-            st.image(msg["image_url"], caption=f"📖 {msg.get('image_caption', '').title()} - via Wikipedia")
+            st.image(msg["image_url"], caption=f"{msg.get('image_caption', '').title()} - via Wikipedia")
         if msg.get("sources"):
-            st.caption("📚 From: " + ", ".join(msg["sources"]))
+            st.caption(":material/library_books: From: " + ", ".join(msg["sources"]))
 
 
 def answer_question():
@@ -1093,13 +1104,19 @@ def answer_question():
 
 
 def render_learn_tab():
-    st.subheader("💬 Ask your teacher")
+    st.subheader(":material/forum: Ask your teacher")
 
     if not api_key:
         st.error("The teacher is not ready yet: the GROQ_API_KEY secret is missing. Ask the person who runs this app to add it.")
 
     if not st.session_state.messages:
-        st.info("👋 Hello! Choose your class and subject on the left, then type a question or tap the microphone.")
+        _hero = os.path.join(ASSETS_DIR, "hero_learner.jpg")
+        if os.path.exists(_hero):
+            c_txt, c_img = st.columns([3, 2], vertical_alignment="center")
+            c_txt.info("Hello! Choose your class and subject on the left, then type a question or tap the microphone.", icon=":material/waving_hand:")
+            c_img.image(_hero, use_container_width=True)
+        else:
+            st.info("Hello! Choose your class and subject on the left, then type a question or tap the microphone.", icon=":material/waving_hand:")
 
     for msg in st.session_state.messages:
         render_message(msg)
@@ -1113,7 +1130,7 @@ def render_learn_tab():
             f"Lesson: {class_level} {subject}",
         )
         st.download_button(
-            "📥 Download this lesson (PDF)", pdf_bytes, "LearnMate_Lesson.pdf", "application/pdf"
+            "Download this lesson (PDF)", pdf_bytes, "LearnMate_Lesson.pdf", "application/pdf", icon=":material/download:"
         )
 
     prompt = st.chat_input("Type your question here...")
@@ -1136,15 +1153,15 @@ def render_learn_tab():
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
-        with st.chat_message("assistant"):
+        with st.chat_message("assistant", avatar=TEACHER_AVATAR):
             with st.spinner("Your teacher is thinking..."):
                 try:
                     entry = answer_question()
                 except Exception as e:
                     if "429" in str(e) or "rate limit" in str(e).lower():
-                        st.error("⚠️ The teacher is very busy right now. Please wait a minute and ask again.")
+                        st.error("The teacher is very busy right now. Please wait a minute and ask again.", icon=":material/hourglass_top:")
                     else:
-                        st.error("😕 Something went wrong. Please try again. If it keeps happening, tell an adult.")
+                        st.error("Something went wrong. Please try again. If it keeps happening, tell an adult.", icon=":material/error:")
                         st.caption(f"Technical details: {e}")
                     st.stop()
         st.session_state.messages.append(entry)
@@ -1152,7 +1169,7 @@ def render_learn_tab():
         st.rerun()
 
     if st.session_state.last_response:
-        if st.button("🔊 Listen to the answer"):
+        if st.button("Listen to the answer", icon=":material/volume_up:"):
             with st.spinner("Getting the voice ready..."):
                 try:
                     st.audio(speak(st.session_state.last_response, slow_voice), format="audio/mpeg", autoplay=True)
@@ -1193,11 +1210,11 @@ def option_text(q, idx):
 
 
 def render_quiz_tab():
-    st.subheader("📝 Quiz time")
+    st.subheader(":material/quiz: Quiz time")
     st.write(f"A short quiz for **{class_label(class_level)}** - **{subject}**" + (f" - {topic.strip()}" if topic.strip() else "") + ".")
 
     n_questions = st.slider("How many questions?", 3, 10, 5)
-    if st.button("🚀 Make a new quiz"):
+    if st.button("Make a new quiz", icon=":material/bolt:"):
         if not api_key:
             st.error("The GROQ_API_KEY secret is missing, so I cannot make a quiz yet.")
         else:
@@ -1207,9 +1224,9 @@ def render_quiz_tab():
                 except Exception as e:
                     quiz = []
                     if "429" in str(e) or "rate limit" in str(e).lower():
-                        st.error("⚠️ The teacher is very busy right now. Please wait a minute and try again.")
+                        st.error("The teacher is very busy right now. Please wait a minute and try again.", icon=":material/hourglass_top:")
                     else:
-                        st.error("😕 I could not make a quiz. Please try again.")
+                        st.error("I could not make a quiz. Please try again.", icon=":material/error:")
             if quiz:
                 st.session_state.quiz = quiz
                 st.session_state.quiz_id += 1
@@ -1236,10 +1253,10 @@ def render_quiz_tab():
                         label_visibility="collapsed",
                     )
                 )
-            submitted = st.form_submit_button("✅ Check my answers")
+            submitted = st.form_submit_button("Check my answers", icon=":material/task_alt:")
         if submitted:
             if any(c is None for c in choices):
-                st.warning("Please answer every question first 🙂")
+                st.warning("Please answer every question first.", icon=":material/edit_note:")
             else:
                 picked = [[option_text(q, j) for j in range(4)].index(c) for q, c in zip(quiz, choices)]
                 score = sum(1 for q, p in zip(quiz, picked) if p == q["correct"])
@@ -1275,28 +1292,29 @@ def render_quiz_tab():
             st.warning("Your score was not saved this time. Please tell your teacher.")
             st.caption(f"Technical details: {_save_error}")
         st.success(f"You got {result['score']} out of {result['total']}!")
-        st.write(praise(result["score"], result["total"]))
+        st.info(praise(result["score"], result["total"]), icon=":material/emoji_events:")
         for i, (q, p) in enumerate(zip(quiz, result["picked"])):
             right = p == q["correct"]
-            st.markdown(f"{'✅' if right else '❌'} **{i + 1}. {q['question']}**")
+            st.markdown(f"{':green[:material/check_circle:]' if right else ':red[:material/cancel:]'} **{i + 1}. {q['question']}**")
             if not right:
                 st.markdown(f"Your answer: {option_text(q, p)}")
             st.markdown(f"Correct answer: {option_text(q, q['correct'])}")
             if q["explanation"]:
-                st.caption("💡 " + q["explanation"])
+                st.caption(":material/lightbulb: " + q["explanation"])
 
     st.divider()
-    st.markdown("### 📜 My progress")
+    st.markdown("### :material/trending_up: My progress")
     if st.session_state.progress:
         for i, h in enumerate(st.session_state.progress, 1):
             st.write(f"Quiz {i}: {h['class']} {h['subject']} - {h['topic']}: **{h['score']} / {h['total']}**")
         st.download_button(
-            "📥 Download my progress report (PDF)",
+            "Download my progress report (PDF)",
             build_report_pdf(st.session_state.progress),
             "LearnMate_Progress_Report.pdf",
             "application/pdf",
+            icon=":material/download:",
         )
-        if not (ACCOUNTS_ON and current_user()) and st.button("🗑️ Clear my progress"):
+        if not (ACCOUNTS_ON and current_user()) and st.button("Clear my progress", icon=":material/delete:"):
             st.session_state.progress = []
             st.rerun()
     else:
@@ -1388,7 +1406,7 @@ def load_learner_assignments(user):
 
 
 def render_assignments_tab(pending, done, error):
-    st.subheader("📋 My assignments")
+    st.subheader(":material/assignment: My assignments")
     flash = st.session_state.pop("flash", None)
     if flash:
         st.success(flash)
@@ -1396,15 +1414,15 @@ def render_assignments_tab(pending, done, error):
         st.error("Sorry, I could not load your assignments right now.")
         st.caption(f"Technical details: {error}")
         return
-    st.markdown(f"### ⏳ Pending ({len(pending)})")
+    st.markdown(f"### :material/pending_actions: Pending ({len(pending)})")
     if not pending:
-        st.write("🎉 You have no pending assignments.")
+        st.write(":material/celebration: You have no pending assignments.")
     today = datetime.date.today().isoformat()
     for a in pending:
         with st.container(border=True):
             st.markdown(f"**{a['title']}** - {a['subject']}")
             if a.get("due_date"):
-                late = " ⚠️ overdue" if str(a["due_date"]) < today else ""
+                late = " :red[:material/warning: overdue]" if str(a["due_date"]) < today else ""
                 st.caption(f"Due: {a['due_date']}{late}")
             st.write(a["instructions"])
             with st.form(f"submit_{a['id']}", clear_on_submit=True):
@@ -1421,7 +1439,7 @@ def render_assignments_tab(pending, done, error):
                     except db.DBError as e:
                         st.error("Sorry, your answer was not sent. Please try again.")
                         st.caption(f"Technical details: {e}")
-    st.markdown(f"### ✅ Done ({len(done)})")
+    st.markdown(f"### :material/task_alt: Done ({len(done)})")
     for a, s in done:
         with st.expander(f"{a['title']} - {a['subject']}"):
             st.caption(f"Submitted {str(s['submitted_at'])[:16].replace('T', ' ')}")
@@ -1429,12 +1447,12 @@ def render_assignments_tab(pending, done, error):
 
 
 def render_teacher_tab():
-    st.subheader("👩‍🏫 Teacher tools")
+    st.subheader(":material/cast_for_education: Teacher tools")
     flash = st.session_state.pop("flash", None)
     if flash:
         st.success(flash)
     t_notes, t_assign, t_results, t_people = st.tabs(
-        ["📚 Notes", "📋 Assignments", "📊 Results", "🔑 Learner passwords"]
+        [":material/menu_book: Notes", ":material/assignment: Assignments", ":material/bar_chart: Results", ":material/key: Learner passwords"]
     )
 
     with t_notes:
@@ -1487,7 +1505,7 @@ def render_teacher_tab():
                 except db.DBError:
                     st.error("Could not delete that note.")
 
-        st.markdown("#### 🔍 Check that the teacher can read my notes")
+        st.markdown("#### :material/search: Check that the teacher can read my notes")
         chk1, chk2 = st.columns(2)
         chk_class = chk1.selectbox("Class", CLASSES, index=CLASSES.index(class_level), key="chk_class")
         chk_query = chk2.text_input("Type a topic or question from the note", key="chk_query")
@@ -1556,9 +1574,10 @@ def render_teacher_tab():
                 st.caption("One row per question. Older quizzes taken before this feature have no question details.")
                 st.dataframe(attempts, use_container_width=True, hide_index=True)
                 st.download_button(
-                    "📥 Download results with questions and corrections (CSV)",
+                    "Download results with questions and corrections (CSV)",
                     attempts.to_csv(index=False).encode("utf-8-sig"),
                     "LearnMate_Results_With_Corrections.csv", "text/csv",
+                    icon=":material/download:",
                 )
 
     with t_people:
@@ -1587,22 +1606,188 @@ def render_teacher_tab():
                         st.error("Could not reset the password.")
 
 
+# ----------------------------------------------------------------------------
+# CLASS ROOM: chat with the teacher and live video
+# ----------------------------------------------------------------------------
+def _clock(value):
+    t = db._parse_time(value)
+    return t.astimezone().strftime("%d %b %H:%M") if t else ""
+
+
+def _chat_line(m, can_delete=False):
+    is_teacher_msg = m.get("sender_role", "teacher") == "teacher"
+    avatar = TEACHER_AVATAR if is_teacher_msg else ":material/face:"
+    who = f"{m['sender_name']} (teacher)" if is_teacher_msg else m["sender_name"]
+    with st.chat_message("assistant" if is_teacher_msg else "user", avatar=avatar):
+        st.markdown(f"**{who}** · :gray[{_clock(m['created_at'])}]")
+        st.text(m["body"])
+        if can_delete and st.button("Delete", key=f"del_{m['id']}", icon=":material/delete:", type="tertiary"):
+            try:
+                db.delete_message(m["id"])
+            except db.DBError as e:
+                st.error(str(e))
+            st.rerun()
+
+
+@st.fragment(run_every=10)
+def live_messages(kind, class_level, learner_id=None, can_delete=False):
+    """Refreshes by itself every 10 seconds so new messages appear."""
+    try:
+        rows = db.list_broadcasts(class_level) if kind == "class" else db.list_thread(learner_id)
+    except db.DBError as e:
+        st.error("Could not load messages right now.")
+        st.caption(str(e))
+        return
+    if not rows:
+        st.caption("No messages yet.")
+    for m in rows:
+        if kind == "class":
+            m = {**m, "sender_role": "teacher"}
+        _chat_line(m, can_delete)
+
+
+def _send_box(user, key, thread_id=None, class_level=None, placeholder="Write a message"):
+    with st.form(key, clear_on_submit=True):
+        text = st.text_area("Message", max_chars=db.MAX_MESSAGE_CHARS, height=80,
+                            placeholder=placeholder, label_visibility="collapsed")
+        if st.form_submit_button("Send", icon=":material/send:"):
+            try:
+                db.post_message(user, text, thread_id=thread_id, class_level=class_level)
+                st.rerun()
+            except db.DBError as e:
+                st.warning(str(e))
+
+
+def _join_button(user, session, label, key):
+    st.link_button(label, db.join_url(session["room_url"], user["nickname"]),
+                   icon=":material/videocam:", type="primary", key=key)
+
+
+def render_classroom_learner(user):
+    st.subheader(":material/groups: Class room")
+    try:
+        live = db.active_sessions_for(user)
+    except db.DBError:
+        live = []
+    for s_ in live:
+        who = "your teacher is calling you" if s_["learner_id"] else "your class is live"
+        st.success(f"Live now: {s_.get('title') or who}", icon=":material/sensors:")
+        _join_button(user, s_, "Join the video room", f"join_{s_['id']}")
+    if live:
+        st.caption("Your camera and microphone are your choice. Only join when your teacher or a parent says so. "
+                   "Never share your real name, phone number or address.")
+    t_news, t_chat = st.tabs([":material/campaign: Class announcements", ":material/chat: Message my teacher"])
+    with t_news:
+        live_messages("class", user["class_level"])
+    with t_chat:
+        st.caption("Only you and your teacher can see this chat. Ask about school work. "
+                   "Do not share phone numbers, emails or links.")
+        live_messages("thread", user["class_level"], learner_id=user["id"])
+        _send_box(user, "learner_send", placeholder="Write to your teacher")
+
+
+def render_classroom_teacher(user):
+    st.subheader(":material/groups: Class room")
+    class_level = st.selectbox(
+        "Class", CLASSES, key="room_class",
+        index=CLASSES.index(globals().get("class_level")) if globals().get("class_level") in CLASSES else 0)
+    try:
+        learners = [l for l in db.list_learners() if l["class_level"] == class_level]
+    except db.DBError as e:
+        learners = []
+        st.error("Could not load the learners.")
+        st.caption(str(e))
+    names = {l["nickname"]: l["id"] for l in learners}
+
+    t_video, t_all, t_one = st.tabs([
+        ":material/videocam: Live video", ":material/campaign: Message the whole class",
+        ":material/chat: Message one learner"])
+
+    with t_video:
+        st.caption("Start a private video room. Learners see a Join button on their Class room tab. "
+                   "Keep another adult informed, and do not record children without written consent.")
+        target = st.radio("Who is the session for?", ["Whole class", "One learner"], horizontal=True, key="room_target")
+        learner_id = None
+        if target == "One learner":
+            if names:
+                learner_id = names[st.selectbox("Learner", list(names), key="room_learner")]
+            else:
+                st.info("No learners in this class yet.")
+        title = st.text_input("Session title (optional)", max_chars=80, key="room_title",
+                              placeholder="For example: Fractions revision")
+        with st.expander("Use my own meeting link instead (Zoom, Google Meet, Jitsi)", icon=":material/link:"):
+            custom = st.text_input("Meeting link (must start with https://)", key="room_custom")
+        can_start = target == "Whole class" or learner_id
+        if st.button("Start live session", icon=":material/play_circle:", disabled=not can_start):
+            try:
+                url = db.start_session(user, class_level, learner_id, title, custom)
+                st.session_state["room_last_url"] = url
+            except db.DBError as e:
+                st.error(str(e))
+        _url_now = st.session_state.get("room_last_url")
+        try:
+            active = [a for a in db.active_sessions_all() if a["class_level"] == class_level]
+        except db.DBError:
+            active = []
+        for a in active:
+            who = "whole class" if not a["learner_id"] else next(
+                (n for n, i in names.items() if i == a["learner_id"]), "one learner")
+            c1, c2 = st.columns([3, 1])
+            c1.success(f"Live: {class_level}, {who} (started {_clock(a['created_at'])})", icon=":material/sensors:")
+            with c2:
+                st.link_button("Open room", db.join_url(a["room_url"], user["nickname"]),
+                               icon=":material/videocam:", type="primary", key=f"open_{a['id']}")
+                if st.button("End", key=f"end_{a['id']}", icon=":material/stop_circle:"):
+                    try:
+                        db.end_session(a["id"])
+                    except db.DBError as e:
+                        st.error(str(e))
+                    st.rerun()
+        if not active and _url_now:
+            st.caption("Session ended or not started yet.")
+
+    with t_all:
+        st.caption(f"Announcements go to every learner in {class_level}. Learners cannot reply here.")
+        live_messages("class", class_level, can_delete=True)
+        _send_box(user, "teacher_all", thread_id=None, class_level=class_level,
+                  placeholder=f"Announcement for {class_level}")
+
+    with t_one:
+        if not names:
+            st.info("No learners in this class yet.")
+        else:
+            who = st.selectbox("Learner", list(names), key="room_dm")
+            live_messages("thread", class_level, learner_id=names[who], can_delete=True)
+            _send_box(user, f"teacher_dm_{who}", thread_id=names[who], class_level=class_level,
+                      placeholder=f"Reply to {who}")
+
+
+
+_LEARN = ":material/forum: Learn with your teacher"
+_QUIZ = ":material/quiz: Quiz time"
+_ROOM = ":material/groups: Class room"
 if ACCOUNTS_ON and is_teacher():
-    tab_learn, tab_quiz, tab_teacher = st.tabs(
-        ["💬 Learn with your teacher", "📝 Quiz time", "👩‍🏫 Teacher tools"]
+    tab_learn, tab_quiz, tab_room, tab_teacher = st.tabs(
+        [_LEARN, _QUIZ, _ROOM, ":material/cast_for_education: Teacher tools"]
     )
+    with tab_room:
+        render_classroom_teacher(current_user())
     with tab_teacher:
         render_teacher_tab()
 elif ACCOUNTS_ON and current_user():
     _pending, _done, _asg_error = load_learner_assignments(current_user())
-    _asg_label = f"📋 Assignments ({len(_pending)})" if _pending else "📋 Assignments"
+    _asg_label = (f":material/assignment: Assignments ({len(_pending)})" if _pending
+                  else ":material/assignment: Assignments")
     if _pending:
-        st.warning(f"📋 You have {len(_pending)} pending assignment(s). Open the Assignments tab to see them.")
-    tab_learn, tab_quiz, tab_assign = st.tabs(["💬 Learn with your teacher", "📝 Quiz time", _asg_label])
+        st.warning(f"You have {len(_pending)} pending assignment(s). Open the Assignments tab to see them.",
+                   icon=":material/assignment_late:")
+    tab_learn, tab_quiz, tab_assign, tab_room = st.tabs([_LEARN, _QUIZ, _asg_label, _ROOM])
     with tab_assign:
         render_assignments_tab(_pending, _done, _asg_error)
+    with tab_room:
+        render_classroom_learner(current_user())
 else:
-    tab_learn, tab_quiz = st.tabs(["💬 Learn with your teacher", "📝 Quiz time"])
+    tab_learn, tab_quiz = st.tabs([_LEARN, _QUIZ])
 with tab_learn:
     render_learn_tab()
 with tab_quiz:

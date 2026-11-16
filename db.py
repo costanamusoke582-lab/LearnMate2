@@ -407,3 +407,131 @@ def download_note(storage_path):
 def delete_note(note_id, storage_path):
     _storage("DELETE", f"object/{NOTES_BUCKET}/{storage_path}", headers=_headers())
     _rest("DELETE", "notes", params={"id": f"eq.{note_id}"})
+
+
+# ----------------------------------------------------------------------------
+# Class room: chat messages and live video sessions
+# ----------------------------------------------------------------------------
+MAX_MESSAGE_CHARS = 500
+VIDEO_BASE_URL = "https://meet.jit.si"
+SESSION_MAX_HOURS = 6
+
+_PHONE_RE = re.compile(r"(?:\+?\d[\s\-().]*){9,}")
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+_LINK_RE = re.compile(r"(https?://|www\.)\S+", re.I)
+
+
+def contains_personal_info(text):
+    """True when a learner's message seems to hold a phone number, email or link."""
+    return bool(_PHONE_RE.search(text) or _EMAIL_RE.search(text) or _LINK_RE.search(text))
+
+
+def clean_message(text):
+    return re.sub(r"\s+", " ", (text or "")).strip()[:MAX_MESSAGE_CHARS]
+
+
+def post_message(user, body, thread_id=None, class_level=None):
+    """Learners post only into their own thread. Teachers may broadcast
+    (thread_id None) or reply into a learner's thread."""
+    body = clean_message(body)
+    if not body:
+        raise DBError("Write a message first.")
+    role = user.get("role")
+    if role != "teacher":
+        thread_id = user["id"]
+        class_level = user["class_level"]
+        if contains_personal_info(body):
+            raise DBError("Please do not share phone numbers, emails or links in chat.")
+    if not class_level:
+        raise DBError("Choose a class first.")
+    _rest("POST", "messages", json={
+        "class_level": class_level, "thread_id": thread_id, "sender_id": user["id"],
+        "sender_name": user["nickname"], "sender_role": role or "learner", "body": body,
+    })
+
+
+def list_broadcasts(class_level, limit=50):
+    rows = _rest("GET", "messages", params={
+        "class_level": f"eq.{class_level}", "thread_id": "is.null",
+        "select": "id,sender_name,body,created_at", "order": "created_at.desc", "limit": str(limit),
+    })
+    return list(reversed(rows))
+
+
+def list_thread(learner_id, limit=100):
+    rows = _rest("GET", "messages", params={
+        "thread_id": f"eq.{learner_id}",
+        "select": "id,sender_name,sender_role,body,created_at", "order": "created_at.desc", "limit": str(limit),
+    })
+    return list(reversed(rows))
+
+
+def delete_message(message_id):
+    _rest("DELETE", "messages", params={"id": f"eq.{message_id}"})
+
+
+def make_room_url(class_level, base_url=None):
+    """An unguessable room name, so only people given the link can find it."""
+    base = (base_url or VIDEO_BASE_URL).rstrip("/")
+    slug = re.sub(r"[^A-Za-z0-9]", "", class_level or "Class")
+    return f"{base}/LearnMate{slug}{secrets.token_hex(6)}"
+
+
+def is_safe_meeting_url(url):
+    return bool(re.fullmatch(r"https://[A-Za-z0-9.-]+(/[A-Za-z0-9._~%/\-?=&#+]*)?", (url or "").strip()))
+
+
+def start_session(user, class_level, learner_id=None, title=None, custom_url=None):
+    if user.get("role") != "teacher":
+        raise DBError("Only teachers can start a live session.")
+    url = (custom_url or "").strip() or make_room_url(class_level)
+    if not is_safe_meeting_url(url):
+        raise DBError("The meeting link must start with https://")
+    end_sessions(class_level, learner_id)
+    _rest("POST", "live_sessions", json={
+        "class_level": class_level, "learner_id": learner_id, "room_url": url,
+        "title": (title or "").strip()[:80] or None, "started_by": user["id"],
+    })
+    return url
+
+
+def end_sessions(class_level, learner_id=None):
+    params = {"class_level": f"eq.{class_level}", "ended_at": "is.null"}
+    params["learner_id"] = f"eq.{learner_id}" if learner_id else "is.null"
+    _rest("PATCH", "live_sessions", params=params,
+          json={"ended_at": datetime.now(timezone.utc).isoformat()})
+
+
+def end_session(session_id):
+    _rest("PATCH", "live_sessions", params={"id": f"eq.{session_id}"},
+          json={"ended_at": datetime.now(timezone.utc).isoformat()})
+
+
+def _fresh(rows):
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=SESSION_MAX_HOURS)
+    return [r for r in rows if (_parse_time(r["created_at"]) or cutoff) >= cutoff]
+
+
+def active_sessions_for(user):
+    """Live sessions a learner may join: the whole class's, or one meant for them."""
+    rows = _rest("GET", "live_sessions", params={
+        "class_level": f"eq.{user['class_level']}", "ended_at": "is.null",
+        "select": "id,learner_id,room_url,title,created_at", "order": "created_at.desc", "limit": "10",
+    })
+    return [r for r in _fresh(rows) if not r["learner_id"] or r["learner_id"] == user["id"]]
+
+
+def active_sessions_all():
+    rows = _rest("GET", "live_sessions", params={
+        "ended_at": "is.null", "select": "id,class_level,learner_id,room_url,title,created_at",
+        "order": "created_at.desc", "limit": "50",
+    })
+    return _fresh(rows)
+
+
+def join_url(url, display_name):
+    """Add the learner's nickname for Jitsi rooms; other providers get the plain link."""
+    if "jit.si" in url or "8x8.vc" in url:
+        from urllib.parse import quote
+        return f'{url}#userInfo.displayName="{quote(display_name)}"'
+    return url
