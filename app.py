@@ -851,64 +851,68 @@ def auth_gate():
     """Shows the log in / create account screen and stops the page until someone is signed in."""
     if not ACCOUNTS_ON or current_user():
         return
-    _banner = os.path.join(ASSETS_DIR, "login_banner.jpg")
-    if os.path.exists(_banner):
-        st.image(_banner, use_container_width=True)
-    st.info("Welcome! Log in, or create an account, to start learning. Please use a nickname, not your real name.", icon=":material/waving_hand:")
-    tab_in, tab_new = st.tabs([":material/login: Log in", ":material/person_add: Create account"])
+    _panel = os.path.join(ASSETS_DIR, "login_panel.jpg")
+    if os.path.exists(_panel):
+        col_img, col_form = st.columns([5, 6], gap="large", vertical_alignment="top")
+        col_img.image(_panel, use_container_width=True)
+    else:
+        col_form = st.container()
+    with col_form:
+        st.info("Welcome! Log in, or create an account, to start learning. Please use a nickname, not your real name.", icon=":material/waving_hand:")
+        tab_in, tab_new = st.tabs([":material/login: Log in", ":material/person_add: Create account"])
 
-    with tab_in:
-        with st.form("login_form"):
-            cls = st.selectbox("Class", ["ALL"] + CLASSES, format_func=class_or_all, key="login_class")
-            nick = st.text_input("Nickname", key="login_nick")
-            pw = st.text_input("Password", type="password", key="login_pw")
-            go = st.form_submit_button("Log in")
-        if go:
-            try:
-                user, err = db.authenticate(cls, nick, pw)
-            except db.DBError:
-                user, err = None, "Sorry, the sign-in system is not available right now. Please try again soon."
-            if user:
-                log_in(user)
-            else:
-                st.error(err)
-        st.caption("Teachers choose \"All classes\" if they signed up that way. Forgot your password? Ask your teacher to reset it.")
-
-    with tab_new:
-        role = st.radio("I am a", ["Learner", "Teacher"], horizontal=True, key="signup_role").lower()
-        options = CLASSES if role == "learner" else ["ALL"] + CLASSES
-        with st.form("signup_form"):
-            cls = st.selectbox("Class", options, format_func=class_or_all, key=f"signup_class_{role}")
-            nick = st.text_input("Nickname (3 to 20 letters or numbers)", key="signup_nick")
-            pw = st.text_input("Password (at least 6 characters)", type="password", key="signup_pw")
-            pw2 = st.text_input("Type the password again", type="password", key="signup_pw2")
-            code = st.text_input("Teacher invite code", type="password", key="signup_code") if role == "teacher" else ""
-            consent = (
-                st.checkbox("My parent, guardian or teacher knows I am using this app.", key="signup_consent")
-                if role == "learner" else True
-            )
-            go = st.form_submit_button("Create my account")
-        if go:
-            err = db.validate_signup(nick, pw, pw2)
-            if not err and role == "teacher":
-                if not TEACHER_INVITE_CODE:
-                    err = "Teacher sign-up is not open yet. Please ask the person who runs this app."
-                elif not hmac.compare_digest(code.encode(), TEACHER_INVITE_CODE.encode()):
-                    err = "That teacher code is not correct."
-            if not err and not consent:
-                err = "Please ask a parent, guardian or teacher first, then tick the box."
-            if err:
-                st.error(err)
-            else:
+        with tab_in:
+            with st.form("login_form"):
+                cls = st.selectbox("Class", ["ALL"] + CLASSES, format_func=class_or_all, key="login_class")
+                nick = st.text_input("Nickname", key="login_nick")
+                pw = st.text_input("Password", type="password", key="login_pw")
+                go = st.form_submit_button("Log in")
+            if go:
                 try:
-                    user, err = db.create_account(cls, nick, pw, role, consent)
+                    user, err = db.authenticate(cls, nick, pw)
                 except db.DBError:
-                    user, err = None, "Sorry, I could not create the account right now. Please try again soon."
+                    user, err = None, "Sorry, the sign-in system is not available right now. Please try again soon."
                 if user:
                     log_in(user)
                 else:
                     st.error(err)
-        st.caption("Your password is stored in a scrambled form that nobody can read. Please do not use a password you use anywhere else.")
+            st.caption("Teachers choose \"All classes\" if they signed up that way. Forgot your password? Ask your teacher to reset it.")
+
+        with tab_new:
+            role = st.radio("I am a", ["Learner", "Teacher"], horizontal=True, key="signup_role").lower()
+            options = CLASSES if role == "learner" else ["ALL"] + CLASSES
+            with st.form("signup_form"):
+                cls = st.selectbox("Class", options, format_func=class_or_all, key=f"signup_class_{role}")
+                nick = st.text_input("Nickname (3 to 20 letters or numbers)", key="signup_nick")
+                pw = st.text_input("Password (at least 6 characters)", type="password", key="signup_pw")
+                pw2 = st.text_input("Type the password again", type="password", key="signup_pw2")
+                code = st.text_input("Teacher invite code", type="password", key="signup_code") if role == "teacher" else ""
+                consent = (
+                    st.checkbox("My parent, guardian or teacher knows I am using this app.", key="signup_consent")
+                    if role == "learner" else True
+                )
+                go = st.form_submit_button("Create my account")
+            if go:
+                err = db.validate_signup(nick, pw, pw2)
+                if not err and role == "teacher":
+                    if not TEACHER_INVITE_CODE:
+                        err = "Teacher sign-up is not open yet. Please ask the person who runs this app."
+                    elif not hmac.compare_digest(code.encode(), TEACHER_INVITE_CODE.encode()):
+                        err = "That teacher code is not correct."
+                if not err and not consent:
+                    err = "Please ask a parent, guardian or teacher first, then tick the box."
+                if err:
+                    st.error(err)
+                else:
+                    try:
+                        user, err = db.create_account(cls, nick, pw, role, consent)
+                    except db.DBError:
+                        user, err = None, "Sorry, I could not create the account right now. Please try again soon."
+                    if user:
+                        log_in(user)
+                    else:
+                        st.error(err)
+            st.caption("Your password is stored in a scrambled form that nobody can read. Please do not use a password you use anywhere else.")
     st.stop()
 
 
@@ -1211,8 +1215,14 @@ def option_text(q, idx):
 
 def render_quiz_tab():
     st.subheader(":material/quiz: Quiz time")
-    st.write(f"A short quiz for **{class_label(class_level)}** - **{subject}**" + (f" - {topic.strip()}" if topic.strip() else "") + ".")
-
+    _intro = f"A short quiz for **{class_label(class_level)}** - **{subject}**" + (f" - {topic.strip()}" if topic.strip() else "") + "."
+    _qp = os.path.join(ASSETS_DIR, "quiz_panel.jpg")
+    if os.path.exists(_qp) and not st.session_state.get("quiz"):
+        _c1, _c2 = st.columns([3, 2], vertical_alignment="center")
+        _c1.write(_intro)
+        _c2.image(_qp, use_container_width=True)
+    else:
+        st.write(_intro)
     n_questions = st.slider("How many questions?", 3, 10, 5)
     if st.button("Make a new quiz", icon=":material/bolt:"):
         if not api_key:
@@ -1663,7 +1673,14 @@ def _join_button(user, session, label, key):
                    icon=":material/videocam:", type="primary", key=key)
 
 
+def _room_banner():
+    _b = os.path.join(ASSETS_DIR, "classroom_banner.jpg")
+    if os.path.exists(_b):
+        st.image(_b, use_container_width=True)
+
+
 def render_classroom_learner(user):
+    _room_banner()
     st.subheader(":material/groups: Class room")
     try:
         live = db.active_sessions_for(user)
@@ -1687,6 +1704,7 @@ def render_classroom_learner(user):
 
 
 def render_classroom_teacher(user):
+    _room_banner()
     st.subheader(":material/groups: Class room")
     class_level = st.selectbox(
         "Class", CLASSES, key="room_class",
