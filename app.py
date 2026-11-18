@@ -65,7 +65,11 @@ LIBRARY_LINKS = []  # no outside websites are shown to learners; add ("Label", "
 
 CLASSES = [f"P{i}" for i in range(1, 8)] + [f"S{i}" for i in range(1, 7)]
 
-PRIMARY_SUBJECTS = ["English", "Mathematics", "Social Studies", "Science", "Other"]
+PRIMARY_SUBJECTS = [
+    "English", "Mathematics", "Social Studies", "Science", "Local Language",
+    "Christian Religious Education", "Islamic Religious Education",
+    "Creative Arts and Physical Education", "Other",
+]
 # P1 to P3 follow the thematic curriculum, with its own subject names.
 LOWER_PRIMARY_SUBJECTS = [
     "English", "Mathematics", "Integrated Environmental and Health Learning",
