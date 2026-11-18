@@ -66,6 +66,11 @@ LIBRARY_LINKS = []  # no outside websites are shown to learners; add ("Label", "
 CLASSES = [f"P{i}" for i in range(1, 8)] + [f"S{i}" for i in range(1, 7)]
 
 PRIMARY_SUBJECTS = ["English", "Mathematics", "Social Studies", "Science", "Other"]
+# P1 to P3 follow the thematic curriculum, with its own subject names.
+LOWER_PRIMARY_SUBJECTS = [
+    "English", "Mathematics", "Integrated Environmental and Health Learning",
+    "Creative Performing Arts", "Physical Education", "Other",
+]
 SECONDARY_SUBJECTS = [
     "Mathematics", "English", "Biology", "Chemistry", "Physics", "Geography",
     "History", "Economics", "Entrepreneurship", "Other",
@@ -997,7 +1002,12 @@ with st.sidebar:
     class_level = st.selectbox(
         "Class", CLASSES, index=_class_index, format_func=class_label, disabled=_lock_class
     )
-    subjects = PRIMARY_SUBJECTS if class_level.startswith("P") else SECONDARY_SUBJECTS
+    if class_level in ("P1", "P2", "P3"):
+        subjects = LOWER_PRIMARY_SUBJECTS
+    elif class_level.startswith("P"):
+        subjects = PRIMARY_SUBJECTS
+    else:
+        subjects = SECONDARY_SUBJECTS
     subject = st.selectbox("Subject", subjects)
     syllabus_text = get_curriculum(class_level, subject)
     syllabus_topics = curriculum_topics(syllabus_text)
@@ -1337,7 +1347,7 @@ def render_quiz_tab():
 # ----------------------------------------------------------------------------
 # TAB 3: TEACHER TOOLS (teachers only)
 # ----------------------------------------------------------------------------
-ALL_SUBJECTS = sorted(set(PRIMARY_SUBJECTS + SECONDARY_SUBJECTS))
+ALL_SUBJECTS = sorted(set(PRIMARY_SUBJECTS + LOWER_PRIMARY_SUBJECTS + SECONDARY_SUBJECTS))
 MAX_NOTE_MB = 20
 
 
