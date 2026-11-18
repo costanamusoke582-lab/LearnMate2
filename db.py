@@ -535,3 +535,30 @@ def join_url(url, display_name):
         from urllib.parse import quote
         return f'{url}#userInfo.displayName="{quote(display_name)}"'
     return url
+
+
+# ----------------------------------------------------------------------------
+# Syllabuses saved by teachers (override the files in the curriculums folder)
+# ----------------------------------------------------------------------------
+def list_syllabi():
+    return _rest("GET", "syllabi", params={
+        "select": "class_level,subject,body,updated_at", "order": "class_level.asc,subject.asc", "limit": "1000",
+    })
+
+
+def save_syllabus(user, class_level, subject, body):
+    if user.get("role") != "teacher":
+        raise DBError("Only teachers can change a syllabus.")
+    body = (body or "").strip()
+    if not class_level or not subject or not body:
+        raise DBError("A class, a subject and some topics are needed.")
+    _rest("POST", "syllabi", params={"on_conflict": "class_level,subject"}, json={
+        "class_level": class_level, "subject": subject, "body": body[:20000],
+        "updated_by": user["id"], "updated_at": datetime.now(timezone.utc).isoformat(),
+    }, prefer="resolution=merge-duplicates")
+
+
+def delete_syllabus(user, class_level, subject):
+    if user.get("role") != "teacher":
+        raise DBError("Only teachers can change a syllabus.")
+    _rest("DELETE", "syllabi", params={"class_level": f"eq.{class_level}", "subject": f"eq.{subject}"})

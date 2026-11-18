@@ -80,6 +80,14 @@ SECONDARY_SUBJECTS = [
     "History", "Economics", "Entrepreneurship", "Other",
 ]
 
+def subjects_for(class_level):
+    if class_level in ("P1", "P2", "P3"):
+        return LOWER_PRIMARY_SUBJECTS
+    if class_level.startswith("P"):
+        return PRIMARY_SUBJECTS
+    return SECONDARY_SUBJECTS
+
+
 LETTERS = ["A", "B", "C", "D"]
 IMAGE_TAG = re.compile(r'\[GENERATE_IMAGE:\s*"([^"]*)"\s*\]')
 
@@ -679,8 +687,109 @@ def load_curriculums(signature=None):
     return found
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def load_saved_syllabi():
+    """Syllabuses teachers saved inside the app. They override the files."""
+    if not db.enabled():
+        return {}
+    try:
+        return {(r["class_level"], normalise_subject(r["subject"])): r["body"] for r in db.list_syllabi()}
+    except Exception as e:
+        print(f"Could not load saved syllabuses: {e}")
+        return {}
+
+
 def get_curriculum(class_level, subject):
-    return curriculum_db.get((class_level, normalise_subject(subject)), "")
+    key = (class_level, normalise_subject(subject))
+    return load_saved_syllabi().get(key) or curriculum_db.get(key, "")
+
+
+_SUBJECT_ALIASES_FULL = {
+    "literacy / english": "English", "literacy": "English", "maths": "Mathematics", "math": "Mathematics",
+    "integrated science": "Science", "sst": "Social Studies", "cre": "Christian Religious Education",
+    "ire": "Islamic Religious Education", "cape": "Creative Arts and Physical Education",
+}
+_CAPE = "Creative Arts and Physical Education"
+_CAPE_PARTS = ["Music, Dance and Drama", "Physical Education", "Art and Technology"]
+_TERM_WORDS = {"one": "One", "1": "One", "two": "Two", "2": "Two", "three": "Three", "3": "Three"}
+_BULLET = re.compile(r"^\s*(?:[-*\u2022\u00b7]|\d+[.)])\s+(.*\S)\s*$")
+
+
+_SUBJECT_LABELS = {n.lower(): n for n in set(PRIMARY_SUBJECTS + LOWER_PRIMARY_SUBJECTS + SECONDARY_SUBJECTS)}
+
+
+def _known_subject(line):
+    """Returns the app's subject name for a heading line, or None."""
+    t = re.sub(r"\s*\([^)]*\)\s*$", "", line.strip().strip("#*:").strip())
+    low = re.sub(r"\s+", " ", t.lower())
+    if low in _SUBJECT_ALIASES_FULL:
+        return _SUBJECT_ALIASES_FULL[low]
+    for name in set(PRIMARY_SUBJECTS + LOWER_PRIMARY_SUBJECTS + SECONDARY_SUBJECTS):
+        if name != "Other" and name.lower() == low:
+            return name
+    return None
+
+
+def parse_pasted_syllabus(text):
+    """
+    Reads a syllabus pasted in everyday form: a line with a subject name, then 'Term One',
+    'Term Two', 'Term Three' lines, each followed by topics (one per line, bullets optional).
+    Returns ({subject: markdown_text}, [warnings]).
+    """
+    data, order = {}, []
+    subject = part = term = None
+    warnings = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        bullet = _BULLET.match(raw)
+        if not bullet:
+            m = re.match(r"^#*\s*term\s*[-:]?\s*(one|two|three|1|2|3)\b", line, re.I)
+            if m and subject:
+                term = "Term " + _TERM_WORDS[m.group(1).lower()]
+                key = f"{part}: {term}" if part else term
+                data[subject].setdefault(key, [])
+                continue
+            if subject == _CAPE and line.strip("#*: ") in _CAPE_PARTS:
+                part, term = line.strip("#*: "), None
+                continue
+            if line.strip("#*: ").lower() in ("religious education", "creative arts and physical education"):
+                continue  # a group heading, its parts follow
+            name = _known_subject(line)
+            if name:
+                subject, part, term = name, None, None
+                if name not in data:
+                    data[name] = {}
+                    order.append(name)
+                continue
+        if not subject:
+            continue  # a title or intro before the first subject
+        topic = bullet.group(1).strip() if bullet else line.strip("#* ")
+        if not bullet and (line.endswith(":") or (line.isupper() and len(line) > 3)):
+            warnings.append(f"Not understood and skipped: {line[:60]}")
+            continue
+        key = (f"{part}: {term}" if part else term) if term else (part or "General")
+        data[subject].setdefault(key, [])
+        if topic not in data[subject][key]:
+            data[subject][key].append(topic)
+    if not order:
+        warnings.append("No subject names were recognised. Put each subject on its own line, using the names in the Subject list.")
+    result = {}
+    for name in order:
+        lines = []
+        for key, items in data[name].items():
+            if not items:
+                continue
+            if key != "General":
+                lines.append(f"### {key}")
+            lines += [f"- {i}" for i in items]
+            lines.append("")
+        if lines:
+            result[name] = "\n".join(lines).strip()
+        else:
+            warnings.append(f"{name}: no topics found under it.")
+    return result, warnings
 
 
 def curriculum_topics(text):
@@ -690,7 +799,7 @@ def curriculum_topics(text):
         m = re.match(r"^(?:[-*]|\d+[.)])\s+(.+?)\s*$", line)
         if m and m.group(1) not in topics:
             topics.append(m.group(1))
-    return topics[:60]
+    return topics[:200]
 
 
 def get_session_store():
@@ -823,7 +932,7 @@ api_key = os.getenv("GROQ_API_KEY", "")
 TEACHER_INVITE_CODE = os.getenv("TEACHER_INVITE_CODE", "")
 ACCOUNTS_ON = db.enabled()
 
-if ACCOUNTS_ON and not all(hasattr(db, n) for n in ("list_assignments", "attempt_rows", "submit_assignment", "post_message", "start_session", "active_sessions_for")):
+if ACCOUNTS_ON and not all(hasattr(db, n) for n in ("list_assignments", "attempt_rows", "submit_assignment", "post_message", "start_session", "active_sessions_for", "save_syllabus", "list_syllabi")):
     st.error(
         "The file db.py on GitHub is an old version. Upload the newest db.py to the main folder of the "
         "repository (replace the existing db.py, do not add a second copy), then reboot the app."
@@ -1025,12 +1134,7 @@ with st.sidebar:
     class_level = st.selectbox(
         "Class", CLASSES, index=_class_index, format_func=class_label, disabled=_lock_class
     )
-    if class_level in ("P1", "P2", "P3"):
-        subjects = LOWER_PRIMARY_SUBJECTS
-    elif class_level.startswith("P"):
-        subjects = PRIMARY_SUBJECTS
-    else:
-        subjects = SECONDARY_SUBJECTS
+    subjects = subjects_for(class_level)
     subject = st.selectbox("Subject", subjects)
     syllabus_text = get_curriculum(class_level, subject)
     syllabus_topics = curriculum_topics(syllabus_text)
@@ -1492,14 +1596,102 @@ def render_assignments_tab(pending, done, error):
             st.write(s["answer"])
 
 
+def render_teacher_syllabus():
+    st.markdown("#### Syllabus")
+    st.caption("The AI teacher keeps to these topics. Changes are used by learners within a minute. "
+               "A syllabus saved here replaces the file for the same class and subject.")
+    user = current_user()
+    cls = st.selectbox("Class", CLASSES, key="syl_class", format_func=class_label)
+    mode = st.radio("What would you like to do?", ["Paste or upload a syllabus", "Edit one subject"],
+                    horizontal=True, key="syl_mode")
+    saved_all = load_saved_syllabi()
+
+    if mode == "Paste or upload a syllabus":
+        st.caption("Paste the syllabus the way you have it: a subject name, then Term One, Term Two, Term Three, "
+                   "each followed by its topics.")
+        up = st.file_uploader("Or upload a .txt or .md file", type=["txt", "md"], key="syl_file")
+        text = st.text_area("Syllabus text", height=300, key="syl_text",
+                            placeholder="English\nTerm One\n- Greetings\n- Alphabet\nTerm Two\n- Reading simple words")
+        if up is not None:
+            text = up.getvalue().decode("utf-8", errors="ignore")
+        if st.button("Preview", icon=":material/visibility:", disabled=not text.strip()):
+            result, warns = parse_pasted_syllabus(text)
+            st.session_state["syl_preview"] = {"class": cls, "result": result, "warnings": warns}
+        prev = st.session_state.get("syl_preview")
+        if prev and prev["class"] == cls:
+            for w in prev["warnings"]:
+                st.warning(w, icon=":material/warning:")
+            if prev["result"]:
+                rows = []
+                for name, body in prev["result"].items():
+                    key = (cls, normalise_subject(name))
+                    status = ("Replaces the saved syllabus" if key in saved_all
+                              else "Replaces the file version" if key in curriculum_db else "New")
+                    rows.append({"Subject": name, "Topics": len(curriculum_topics(body)), "Status": status})
+                st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+                st.caption(f"These will be saved for {class_label(cls)}.")
+                if st.button("Save these syllabuses", type="primary", icon=":material/save:"):
+                    try:
+                        for name, body in prev["result"].items():
+                            db.save_syllabus(user, cls, name, body)
+                        load_saved_syllabi.clear()
+                        st.session_state.pop("syl_preview", None)
+                        st.session_state["flash"] = f"Saved {len(prev['result'])} subject(s) for {cls}."
+                        st.rerun()
+                    except db.DBError as e:
+                        st.error(f"Could not save: {e}")
+    else:
+        subj = st.selectbox("Subject", [x for x in subjects_for(cls) if x != "Other"], key="syl_subject")
+        key = (cls, normalise_subject(subj))
+        nonce = st.session_state.get("syl_nonce", 0)
+        if key in saved_all:
+            current, source = saved_all[key], "Saved in the app"
+        elif key in curriculum_db:
+            current, source = curriculum_db[key], "From a file (saving here will replace it)"
+        else:
+            current, source = "", "No syllabus yet"
+        st.caption(f"Source: {source}")
+        body = st.text_area("Topics (one per line, starting with -)", value=current, height=380,
+                            key=f"syl_edit_{cls}_{subj}_{nonce}")
+        st.caption(f"{len(curriculum_topics(body))} topics. Add new topics as lines starting with - under the right Term.")
+        c1, c2 = st.columns(2)
+        if c1.button("Save changes", type="primary", icon=":material/save:", disabled=not body.strip()):
+            try:
+                db.save_syllabus(user, cls, subj, body)
+                load_saved_syllabi.clear()
+                st.session_state["syl_nonce"] = nonce + 1
+                st.session_state["flash"] = f"Saved the {cls} {subj} syllabus."
+                st.rerun()
+            except db.DBError as e:
+                st.error(f"Could not save: {e}")
+        if key in saved_all and c2.button("Remove saved version", icon=":material/undo:"):
+            try:
+                db.delete_syllabus(user, cls, subj)
+                load_saved_syllabi.clear()
+                st.session_state["syl_nonce"] = nonce + 1
+                st.session_state["flash"] = "Removed. The file version (if any) is used again."
+                st.rerun()
+            except db.DBError as e:
+                st.error(f"Could not remove: {e}")
+
+    if saved_all:
+        with st.expander("Syllabuses saved in the app", icon=":material/list:"):
+            st.dataframe(pd.DataFrame(
+                [{"Class": c, "Subject": _SUBJECT_LABELS.get(sname, sname.title()), "Topics": len(curriculum_topics(b))}
+                 for (c, sname), b in sorted(saved_all.items())]), hide_index=True, use_container_width=True)
+
+
 def render_teacher_tab():
     st.subheader(":material/cast_for_education: Teacher tools")
     flash = st.session_state.pop("flash", None)
     if flash:
         st.success(flash)
-    t_notes, t_assign, t_results, t_people = st.tabs(
-        [":material/menu_book: Notes", ":material/assignment: Assignments", ":material/bar_chart: Results", ":material/key: Learner passwords"]
+    t_notes, t_assign, t_syllabus, t_results, t_people = st.tabs(
+        [":material/menu_book: Notes", ":material/assignment: Assignments", ":material/checklist: Syllabus",
+         ":material/bar_chart: Results", ":material/key: Learner passwords"]
     )
+    with t_syllabus:
+        render_teacher_syllabus()
 
     with t_notes:
         st.markdown("#### Add notes")
