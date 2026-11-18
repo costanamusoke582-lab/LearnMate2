@@ -578,6 +578,7 @@ def load_materials():
             for d in loaded:
                 d.metadata["source"] = label
                 d.metadata["level"] = note.get("class_level") or "ALL"
+                d.metadata["subject"] = normalise_subject(note.get("subject") or "")
             docs.extend(loaded)
         except Exception:
             skipped.append(label)
@@ -646,8 +647,21 @@ def parse_curriculum_text(text):
     return sections
 
 
+def _curriculum_signature():
+    """Changes whenever a syllabus file is added, edited or removed."""
+    sig = []
+    if os.path.isdir(CURRICULUM_DIR):
+        for fn in sorted(os.listdir(CURRICULUM_DIR)):
+            try:
+                st_ = os.stat(os.path.join(CURRICULUM_DIR, fn))
+                sig.append((fn, int(st_.st_mtime), st_.st_size))
+            except OSError:
+                pass
+    return tuple(sig)
+
+
 @st.cache_data(show_spinner=False)
-def load_curriculums():
+def load_curriculums(signature=None):
     """Reads every .md/.txt file in the curriculums folder (README and EXAMPLE files are skipped)."""
     found = {}
     if os.path.isdir(CURRICULUM_DIR):
@@ -682,12 +696,17 @@ def get_session_store():
     return st.session_state.session_vs
 
 
-def retrieve(query, class_level, k=4):
-    """Best matching notes for this class (plus notes marked for everyone)."""
+def retrieve(query, class_level, k=4, subject=None):
+    """Best matching notes for this class (plus notes marked for everyone).
+    When a subject is chosen, notes saved under a different subject are left out."""
     allowed = {class_level, "ALL"}
+    want = normalise_subject(subject) if subject else ""
 
     def flt(doc):
-        return doc.metadata.get("level") in allowed
+        if doc.metadata.get("level") not in allowed:
+            return False
+        note_subject = doc.metadata.get("subject") or ""
+        return not want or note_subject in ("", "other") or want in ("other", note_subject)
 
     scored = []
     st.session_state["search_error"] = ""
@@ -704,7 +723,7 @@ def retrieve(query, class_level, k=4):
 
 
 _base_vs, _material_files, _skipped_files = load_materials()
-curriculum_db = load_curriculums()
+curriculum_db = load_curriculums(_curriculum_signature())
 
 
 # ----------------------------------------------------------------------------
@@ -1080,7 +1099,7 @@ def render_message(msg):
 def answer_question():
     """Ask the teacher using the chat so far. Returns the new assistant message."""
     last_user = st.session_state.messages[-1]["content"]
-    docs = retrieve(f"{subject} {topic} {last_user}".strip(), class_level)
+    docs = retrieve(f"{subject} {topic} {last_user}".strip(), class_level, subject=subject)
     context = "\n\n".join(f"[{d.metadata.get('source', 'notes')}]\n{d.page_content}" for d in docs)
     sources = list(dict.fromkeys(d.metadata.get("source", "notes") for d in docs))
 
@@ -1199,7 +1218,7 @@ def render_learn_tab():
 # ----------------------------------------------------------------------------
 def generate_quiz(n_questions):
     topic_text = topic.strip() or subject
-    docs = retrieve(f"{subject} {topic_text}", class_level, k=3)
+    docs = retrieve(f"{subject} {topic_text}", class_level, k=3, subject=subject)
     notes = "\n\n".join(d.page_content for d in docs)[:3000]
     age, _ = class_profile(class_level)
     asked = "; ".join(st.session_state.asked_questions[-20:])
