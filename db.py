@@ -581,8 +581,8 @@ PLANS = {
 }
 SIBLING_DISCOUNT = 0.5
 # None means no limit.
-FREE_LIMITS = {"questions": 20, "quizzes": 2, "listens": 5, "assignments": 1}
-PLUS_LIMITS = {"questions": 100, "quizzes": None, "listens": None, "assignments": None}
+FREE_LIMITS = {"questions": 20, "quizzes": 2, "listens": 5}
+PLUS_LIMITS = {"questions": 100, "quizzes": None, "listens": None}
 _CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O/1/I/L
 
 
@@ -727,24 +727,13 @@ def confirmed_total(since_iso):
 
 
 def get_usage(user_id, day=None):
-    """Today's counts, plus the ids of the assignments the learner opened today."""
     day = day or today_kampala()
     rows = _rest("GET", "usage_daily", params={
-        "user_id": f"eq.{user_id}", "day": f"eq.{day}",
-        "select": "questions,quizzes,listens,assignment_ids", "limit": "1"})
-    base = {"questions": 0, "quizzes": 0, "listens": 0, "assignment_ids": []}
+        "user_id": f"eq.{user_id}", "day": f"eq.{day}", "select": "questions,quizzes,listens", "limit": "1"})
+    base = {"questions": 0, "quizzes": 0, "listens": 0}
     if rows:
-        for k in ("questions", "quizzes", "listens"):
-            base[k] = int(rows[0].get(k) or 0)
-        base["assignment_ids"] = [x for x in (rows[0].get("assignment_ids") or "").split(",") if x]
+        base.update({k: int(rows[0].get(k) or 0) for k in base})
     return base
-
-
-def _save_usage(user_id, day, use):
-    _rest("POST", "usage_daily", params={"on_conflict": "user_id,day"}, json={
-        "user_id": user_id, "day": day, "questions": use["questions"], "quizzes": use["quizzes"],
-        "listens": use["listens"], "assignment_ids": ",".join(use["assignment_ids"]),
-    }, prefer="resolution=merge-duplicates")
 
 
 def add_usage(user_id, kind):
@@ -753,16 +742,8 @@ def add_usage(user_id, kind):
     day = today_kampala()
     use = get_usage(user_id, day)
     use[kind] += 1
-    _save_usage(user_id, day, use)
-
-
-def open_assignment(user_id, assignment_id):
-    """Remember that a learner opened this assignment today (counts against the free plan)."""
-    day = today_kampala()
-    use = get_usage(user_id, day)
-    if str(assignment_id) not in use["assignment_ids"]:
-        use["assignment_ids"].append(str(assignment_id))
-        _save_usage(user_id, day, use)
+    _rest("POST", "usage_daily", params={"on_conflict": "user_id,day"},
+          json={"user_id": user_id, "day": day, **use}, prefer="resolution=merge-duplicates")
 
 
 def limits_for(plan):
