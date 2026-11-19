@@ -575,9 +575,9 @@ except Exception:  # pragma: no cover
 
 # Prices are suggestions to test with parents. Change them here.
 PLANS = {
-    "month": {"label": "1 month", "days": 31, "price": 20000},
-    "term":  {"label": "1 term (3 months)", "days": 92, "price": 50000},
-    "year":  {"label": "1 year (3 terms)", "days": 365, "price": 135000},
+    "month": {"label": "1 month", "days": 31, "price": 30000},
+    "term":  {"label": "1 term (3 months)", "days": 92, "price": 60000},
+    "year":  {"label": "1 year (3 terms)", "days": 365, "price": 162000},
 }
 SIBLING_DISCOUNT = 0.5
 # None means no limit.
