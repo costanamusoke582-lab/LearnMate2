@@ -562,3 +562,208 @@ def delete_syllabus(user, class_level, subject):
     if user.get("role") != "teacher":
         raise DBError("Only teachers can change a syllabus.")
     _rest("DELETE", "syllabi", params={"class_level": f"eq.{class_level}", "subject": f"eq.{subject}"})
+
+
+# ----------------------------------------------------------------------------
+# Plans, payments and daily limits
+# ----------------------------------------------------------------------------
+try:
+    from zoneinfo import ZoneInfo as _ZoneInfo
+    _KAMPALA = _ZoneInfo("Africa/Kampala")
+except Exception:  # pragma: no cover
+    _KAMPALA = timezone(timedelta(hours=3))
+
+# Prices are suggestions to test with parents. Change them here.
+PLANS = {
+    "month": {"label": "1 month", "days": 31, "price": 20000},
+    "term":  {"label": "1 term (3 months)", "days": 92, "price": 50000},
+    "year":  {"label": "1 year (3 terms)", "days": 365, "price": 135000},
+}
+SIBLING_DISCOUNT = 0.5
+# None means no limit.
+FREE_LIMITS = {"questions": 20, "quizzes": 2, "listens": 5, "assignments": 1}
+PLUS_LIMITS = {"questions": 100, "quizzes": None, "listens": None, "assignments": None}
+_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O/1/I/L
+
+
+def today_kampala():
+    return datetime.now(_KAMPALA).date().isoformat()
+
+
+def plan_price(plan_code, second_child=False):
+    price = PLANS[plan_code]["price"]
+    return int(round(price * (SIBLING_DISCOUNT if second_child else 1) / 100.0) * 100)
+
+
+def payment_config():
+    """Where parents send mobile money. Set these in the app's secrets."""
+    return {
+        "mtn": os.getenv("MOMO_MTN_NUMBER", "").strip(),
+        "airtel": os.getenv("MOMO_AIRTEL_NUMBER", "").strip(),
+        "name": os.getenv("MOMO_ACCOUNT_NAME", "").strip(),
+    }
+
+
+def is_payment_admin(user):
+    """Teachers can confirm payments. Set PAYMENT_ADMIN_NICKNAMES to limit it to certain teachers."""
+    if not user or user.get("role") != "teacher":
+        return False
+    allowed = [n.strip().lower() for n in os.getenv("PAYMENT_ADMIN_NICKNAMES", "").split(",") if n.strip()]
+    return not allowed or (user.get("nickname", "").lower() in allowed)
+
+
+def _require_admin(user):
+    if not is_payment_admin(user):
+        raise DBError("You are not allowed to manage payments.")
+
+
+def make_payment_code():
+    return "LM-" + "".join(secrets.choice(_CODE_ALPHABET) for _ in range(5))
+
+
+def create_payment_request(user, plan_code, second_child=False):
+    if user.get("role") != "learner":
+        raise DBError("Only learners can ask for a payment code.")
+    if plan_code not in PLANS:
+        raise DBError("Choose a plan first.")
+    # A learner keeps one open request at a time.
+    _rest("DELETE", "payment_requests", params={"user_id": f"eq.{user['id']}", "status": "eq.pending"})
+    code = make_payment_code()
+    _rest("POST", "payment_requests", json={
+        "user_id": user["id"], "nickname": user["nickname"], "class_level": user.get("class_level"),
+        "plan_code": plan_code, "amount_ugx": plan_price(plan_code, second_child), "code": code,
+    })
+    return code
+
+
+def my_payment_requests(user_id, limit=5):
+    return _rest("GET", "payment_requests", params={
+        "user_id": f"eq.{user_id}", "select": "id,plan_code,amount_ugx,code,txn_ref,status,note,created_at",
+        "order": "created_at.desc", "limit": str(limit),
+    })
+
+
+def set_payment_reference(user_id, request_id, txn_ref):
+    txn_ref = re.sub(r"[^A-Za-z0-9 _.-]", "", txn_ref or "").strip()[:40]
+    _rest("PATCH", "payment_requests", params={"id": f"eq.{request_id}", "user_id": f"eq.{user_id}", "status": "eq.pending"},
+          json={"txn_ref": txn_ref or None})
+
+
+def list_payment_requests(status="pending", limit=200):
+    return _rest("GET", "payment_requests", params={
+        "status": f"eq.{status}",
+        "select": "id,user_id,nickname,class_level,plan_code,amount_ugx,code,txn_ref,status,note,created_at,confirmed_at",
+        "order": "created_at.desc", "limit": str(limit),
+    })
+
+
+def active_plan(user_id):
+    """The learner's current paid plan, or None for the free plan."""
+    now = datetime.now(timezone.utc).isoformat()
+    rows = _rest("GET", "subscriptions", params={
+        "user_id": f"eq.{user_id}", "ends_at": f"gt.{now}",
+        "select": "plan_code,starts_at,ends_at,source", "order": "ends_at.desc", "limit": "1",
+    })
+    return rows[0] if rows else None
+
+
+def _add_subscription(admin, user_row, plan_code, days, amount, source, reference):
+    current = active_plan(user_row["user_id"])
+    start = datetime.now(timezone.utc)
+    if current:
+        later = _parse_time(current["ends_at"])
+        if later and later > start:
+            start = later  # a new payment adds time after the current plan
+    _rest("POST", "subscriptions", json={
+        "user_id": user_row["user_id"], "nickname": user_row["nickname"], "class_level": user_row.get("class_level"),
+        "plan_code": plan_code, "starts_at": start.isoformat(), "ends_at": (start + timedelta(days=days)).isoformat(),
+        "amount_ugx": amount, "source": source, "reference": reference, "created_by": admin["id"],
+    })
+
+
+def confirm_payment(admin, request_id):
+    _require_admin(admin)
+    rows = _rest("GET", "payment_requests", params={"id": f"eq.{request_id}", "select": "*"})
+    if not rows:
+        raise DBError("That payment request was not found.")
+    req = rows[0]
+    if req["status"] != "pending":
+        raise DBError("That payment was already handled.")
+    _add_subscription(admin, {"user_id": req["user_id"], "nickname": req["nickname"], "class_level": req.get("class_level")},
+                      req["plan_code"], PLANS[req["plan_code"]]["days"], req["amount_ugx"], "momo", req["code"])
+    _rest("PATCH", "payment_requests", params={"id": f"eq.{request_id}"}, json={
+        "status": "confirmed", "confirmed_at": datetime.now(timezone.utc).isoformat(), "confirmed_by": admin["id"]})
+
+
+def reject_payment(admin, request_id, note=""):
+    _require_admin(admin)
+    _rest("PATCH", "payment_requests", params={"id": f"eq.{request_id}", "status": "eq.pending"},
+          json={"status": "rejected", "note": (note or "")[:120] or None,
+                "confirmed_at": datetime.now(timezone.utc).isoformat(), "confirmed_by": admin["id"]})
+
+
+def grant_plan(admin, learners, days, reference):
+    """School or sponsor plan: give Plus to several learners at once."""
+    _require_admin(admin)
+    days = max(1, min(int(days), 400))
+    reference = (reference or "School or sponsor")[:80]
+    for lr in learners:
+        _add_subscription(admin, {"user_id": lr["id"], "nickname": lr["nickname"], "class_level": lr.get("class_level")},
+                          "school", days, 0, "school", reference)
+
+
+def list_subscriptions(limit=300):
+    now = datetime.now(timezone.utc).isoformat()
+    return _rest("GET", "subscriptions", params={
+        "ends_at": f"gt.{now}", "select": "nickname,class_level,plan_code,starts_at,ends_at,amount_ugx,source,reference",
+        "order": "ends_at.desc", "limit": str(limit),
+    })
+
+
+def confirmed_total(since_iso):
+    rows = _rest("GET", "subscriptions", params={
+        "source": "eq.momo", "created_at": f"gte.{since_iso}", "select": "amount_ugx", "limit": "5000"})
+    return sum(int(r.get("amount_ugx") or 0) for r in rows)
+
+
+def get_usage(user_id, day=None):
+    """Today's counts, plus the ids of the assignments the learner opened today."""
+    day = day or today_kampala()
+    rows = _rest("GET", "usage_daily", params={
+        "user_id": f"eq.{user_id}", "day": f"eq.{day}",
+        "select": "questions,quizzes,listens,assignment_ids", "limit": "1"})
+    base = {"questions": 0, "quizzes": 0, "listens": 0, "assignment_ids": []}
+    if rows:
+        for k in ("questions", "quizzes", "listens"):
+            base[k] = int(rows[0].get(k) or 0)
+        base["assignment_ids"] = [x for x in (rows[0].get("assignment_ids") or "").split(",") if x]
+    return base
+
+
+def _save_usage(user_id, day, use):
+    _rest("POST", "usage_daily", params={"on_conflict": "user_id,day"}, json={
+        "user_id": user_id, "day": day, "questions": use["questions"], "quizzes": use["quizzes"],
+        "listens": use["listens"], "assignment_ids": ",".join(use["assignment_ids"]),
+    }, prefer="resolution=merge-duplicates")
+
+
+def add_usage(user_id, kind):
+    if kind not in ("questions", "quizzes", "listens"):
+        return
+    day = today_kampala()
+    use = get_usage(user_id, day)
+    use[kind] += 1
+    _save_usage(user_id, day, use)
+
+
+def open_assignment(user_id, assignment_id):
+    """Remember that a learner opened this assignment today (counts against the free plan)."""
+    day = today_kampala()
+    use = get_usage(user_id, day)
+    if str(assignment_id) not in use["assignment_ids"]:
+        use["assignment_ids"].append(str(assignment_id))
+        _save_usage(user_id, day, use)
+
+
+def limits_for(plan):
+    return PLUS_LIMITS if plan else FREE_LIMITS

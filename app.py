@@ -15,6 +15,7 @@ import random
 import re
 import shutil
 import tempfile
+import time
 import uuid
 from xml.sax.saxutils import escape
 
@@ -932,7 +933,7 @@ api_key = os.getenv("GROQ_API_KEY", "")
 TEACHER_INVITE_CODE = os.getenv("TEACHER_INVITE_CODE", "")
 ACCOUNTS_ON = db.enabled()
 
-if ACCOUNTS_ON and not all(hasattr(db, n) for n in ("list_assignments", "attempt_rows", "submit_assignment", "post_message", "start_session", "active_sessions_for", "save_syllabus", "list_syllabi")):
+if ACCOUNTS_ON and not all(hasattr(db, n) for n in ("list_assignments", "attempt_rows", "submit_assignment", "post_message", "start_session", "active_sessions_for", "save_syllabus", "list_syllabi", "confirm_payment", "active_plan")):
     st.error(
         "The file db.py on GitHub is an old version. Upload the newest db.py to the main folder of the "
         "repository (replace the existing db.py, do not add a second copy), then reboot the app."
@@ -1121,11 +1122,115 @@ def teacher_panel():
             st.caption("Added this session: " + ", ".join(dict.fromkeys(st.session_state.session_files)))
 
 
+# ----------------------------------------------------------------------------
+# PLANS AND DAILY LIMITS
+# ----------------------------------------------------------------------------
+REFUND_TEXT = (
+    "Plans are paid in advance and do not renew by themselves. If you paid by mistake, "
+    "tell your teacher within 7 days and the payment will be corrected or refunded."
+)
+LIMIT_WORDS = {"questions": "questions", "quizzes": "quizzes", "listens": "voice answers"}
+
+
+def learner_user():
+    u = current_user() if ACCOUNTS_ON else None
+    return u if (u and not is_teacher()) else None
+
+
+def current_plan(force=False):
+    """The learner's paid plan, or None for the free plan. Checked at most once a minute."""
+    u = learner_user()
+    if not u:
+        return None
+    cache = st.session_state.get("plan_cache")
+    if cache and not force and cache[2] == u["id"] and time.time() - cache[0] < 60:
+        return cache[1]
+    try:
+        plan = db.active_plan(u["id"])
+    except Exception as e:
+        print(f"Could not check the plan: {e}")
+        plan = None
+    st.session_state["plan_cache"] = (time.time(), plan, u["id"])
+    return plan
+
+
+def usage_left(kind):
+    """How many are left today. None means no limit applies."""
+    u = learner_user()
+    if not u:
+        return None
+    limit = db.limits_for(current_plan()).get(kind)
+    if limit is None:
+        return None
+    try:
+        used = db.get_usage(u["id"]).get(kind, 0)
+    except Exception as e:
+        print(f"Could not read usage: {e}")
+        return None  # never block a child because of a database problem
+    return max(0, limit - used)
+
+
+def limit_reached(kind):
+    left = usage_left(kind)
+    return left is not None and left <= 0
+
+
+def record_use(kind):
+    u = learner_user()
+    if u:
+        try:
+            db.add_usage(u["id"], kind)
+        except Exception as e:
+            print(f"Could not record usage: {e}")
+
+
+def show_limit_message(kind):
+    limit = db.limits_for(current_plan()).get(kind)
+    plan_name = "Learner Plus" if current_plan() else "free plan"
+    st.info(
+        f"You have used all {limit} {LIMIT_WORDS[kind]} for today on the {plan_name}. "
+        "Come back tomorrow" + ("" if current_plan() else ", or ask a parent about Learner Plus in the Plans tab") + ".",
+        icon=":material/hourglass_top:",
+    )
+
+
+def free_assignment_state():
+    """(ids opened today, daily limit) for a learner with an assignment limit, else (None, None)."""
+    u = learner_user()
+    if not u:
+        return None, None
+    limit = db.limits_for(current_plan()).get("assignments")
+    if limit is None:
+        return None, None
+    try:
+        return db.get_usage(u["id"])["assignment_ids"], limit
+    except Exception as e:
+        print(f"Could not read assignment usage: {e}")
+        return None, None  # never lock a child out because of a database problem
+
+
+def _ugx(n):
+    return f"UGX {int(n):,}"
+
+
+def _date_text(iso):
+    t = db._parse_time(iso)
+    return t.astimezone(db._KAMPALA).strftime("%d %b %Y") if t else ""
+
+
 with st.sidebar:
     if ACCOUNTS_ON and current_user():
         _me = current_user()
         _who = "Teacher" if is_teacher() else _me["class_level"]
         st.success(f"Signed in: **{_me['nickname']}** ({_who})")
+        if learner_user():
+            _plan = current_plan()
+            if _plan:
+                st.caption(f":material/workspace_premium: Learner Plus until {_date_text(_plan['ends_at'])}")
+            else:
+                _left = usage_left("questions")
+                if _left is not None:
+                    st.caption(f":material/redeem: Free plan: {_left} questions left today")
         if st.button("Log out", icon=":material/logout:"):
             log_out()
     st.header(":material/school: My class")
@@ -1291,6 +1396,9 @@ def render_learn_tab():
             except Exception:
                 st.error("Sorry, I could not understand the recording. Please try again or type your question.")
 
+    if prompt and api_key and limit_reached("questions"):
+        show_limit_message("questions")
+        prompt = None  # keep the rest of the page (Plans, Quiz, Class room) working
     if prompt:
         if not api_key:
             st.stop()
@@ -1308,15 +1416,20 @@ def render_learn_tab():
                         st.error("Something went wrong. Please try again. If it keeps happening, tell an adult.", icon=":material/error:")
                         st.caption(f"Technical details: {e}")
                     st.stop()
+        record_use("questions")
         st.session_state.messages.append(entry)
         st.session_state.last_response = entry["content"]
         st.rerun()
 
     if st.session_state.last_response:
         if st.button("Listen to the answer", icon=":material/volume_up:"):
-            with st.spinner("Getting the voice ready..."):
+            if limit_reached("listens"):
+                show_limit_message("listens")
+            else:
+              with st.spinner("Getting the voice ready..."):
                 try:
                     st.audio(speak(st.session_state.last_response, slow_voice), format="audio/mpeg", autoplay=True)
+                    record_use("listens")
                 except Exception:
                     st.error("Sorry, I could not play the voice right now.")
 
@@ -1367,6 +1480,8 @@ def render_quiz_tab():
     if st.button("Make a new quiz", icon=":material/bolt:"):
         if not api_key:
             st.error("The GROQ_API_KEY secret is missing, so I cannot make a quiz yet.")
+        elif limit_reached("quizzes"):
+            show_limit_message("quizzes")
         else:
             with st.spinner("Writing your quiz..."):
                 try:
@@ -1378,6 +1493,7 @@ def render_quiz_tab():
                     else:
                         st.error("I could not make a quiz. Please try again.", icon=":material/error:")
             if quiz:
+                record_use("quizzes")
                 st.session_state.quiz = quiz
                 st.session_state.quiz_id += 1
                 st.session_state.quiz_result = None
@@ -1459,7 +1575,7 @@ def render_quiz_tab():
             st.write(f"Quiz {i}: {h['class']} {h['subject']} - {h['topic']}: **{h['score']} / {h['total']}**")
         st.download_button(
             "Download my progress report (PDF)",
-            build_report_pdf(st.session_state.progress),
+            build_report_pdf(st.session_state.progress if (current_plan() or not learner_user()) else st.session_state.progress[-5:]),
             "LearnMate_Progress_Report.pdf",
             "application/pdf",
             icon=":material/download:",
@@ -1568,12 +1684,28 @@ def render_assignments_tab(pending, done, error):
     if not pending:
         st.write(":material/celebration: You have no pending assignments.")
     today = datetime.date.today().isoformat()
+    opened_ids, day_limit = free_assignment_state()
+    if opened_ids is not None and pending:
+        st.info(f"Free plan: you can open and answer {day_limit} assignment a day. Choose the one you want to do today. "
+                "Learner Plus has no limit.", icon=":material/redeem:")
     for a in pending:
         with st.container(border=True):
             st.markdown(f"**{a['title']}** - {a['subject']}")
             if a.get("due_date"):
                 late = " :red[:material/warning: overdue]" if str(a["due_date"]) < today else ""
                 st.caption(f"Due: {a['due_date']}{late}")
+            if opened_ids is not None and str(a["id"]) not in opened_ids:
+                if len(opened_ids) < day_limit:
+                    if st.button("Open this assignment", key=f"open_asg_{a['id']}", icon=":material/lock_open:"):
+                        try:
+                            db.open_assignment(current_user()["id"], a["id"])
+                        except Exception as e:
+                            print(f"Could not record the opened assignment: {e}")
+                        st.rerun()
+                else:
+                    st.caption(":material/lock: You have used today's free assignment. Come back tomorrow, "
+                               "or ask a parent about Learner Plus in the Plans tab.")
+                continue
             st.write(a["instructions"])
             with st.form(f"submit_{a['id']}", clear_on_submit=True):
                 answer = st.text_area("Your answer", height=120, key=f"ans_{a['id']}")
@@ -1681,15 +1813,219 @@ def render_teacher_syllabus():
                  for (c, sname), b in sorted(saved_all.items())]), hide_index=True, use_container_width=True)
 
 
+def render_plans_tab():
+    user = current_user()
+    st.subheader(":material/workspace_premium: Plans")
+    plan = current_plan()
+    c_top1, c_top2 = st.columns([4, 1], vertical_alignment="center")
+    if plan:
+        c_top1.success(f"Learner Plus is active until **{_date_text(plan['ends_at'])}**.", icon=":material/verified:")
+    else:
+        c_top1.info("You are on the **free plan**. It stays free, and the class room chat and live video are always included.",
+                    icon=":material/redeem:")
+    if c_top2.button("Refresh", icon=":material/refresh:"):
+        current_plan(force=True)
+        st.rerun()
+
+    try:
+        use = db.get_usage(user["id"])
+    except Exception:
+        use = None
+    lim = db.limits_for(plan)
+    if use is not None:
+        m1, m2, m3, m4 = st.columns(4)
+        use["assignments"] = len(use["assignment_ids"])
+        for col, kind, label in ((m1, "questions", "Questions today"), (m2, "quizzes", "Quizzes today"),
+                                 (m3, "listens", "Voice answers today"), (m4, "assignments", "Assignments today")):
+            cap = lim.get(kind)
+            col.metric(label, f"{use[kind]} / {cap}" if cap else f"{use[kind]} (no limit)")
+
+    P = db.PLANS
+    month3, term3 = P["month"]["price"] * 3, P["term"]["price"] * 3
+    save_term = round(100 - P["term"]["price"] * 100 / month3)
+    save_year = round(100 - P["year"]["price"] * 100 / term3)
+    col_free, col_plus, col_school = st.columns(3)
+    with col_free.container(border=True):
+        st.markdown("#### Free")
+        st.markdown(f"**{_ugx(0)}**")
+        st.markdown(
+            f"- {db.FREE_LIMITS['questions']} questions a day\n- {db.FREE_LIMITS['quizzes']} quizzes a day\n"
+            f"- {db.FREE_LIMITS['listens']} voice answers a day\n- {db.FREE_LIMITS['assignments']} assignment a day (open and answer)\n"
+            "- Drawings and pictures\n- Class room chat and live video\n- Progress report: last 5 results"
+        )
+    with col_plus.container(border=True):
+        st.markdown("#### Learner Plus")
+        st.markdown(
+            f"**{_ugx(P['month']['price'])}** a month  \n**{_ugx(P['term']['price'])}** a term (save {save_term}%)  \n"
+            f"**{_ugx(P['year']['price'])}** a year (save {save_year}%)"
+        )
+        st.markdown(
+            f"- Up to {db.PLUS_LIMITS['questions']} questions a day\n- Unlimited quizzes and voice answers\n- Unlimited assignments\n"
+            "- Full progress report for parents\n- Second child: half price"
+        )
+    with col_school.container(border=True):
+        st.markdown("#### School or sponsor")
+        st.markdown("**Set per school**")
+        st.markdown(
+            "- Everything in Learner Plus\n- Paid by the school, an NGO or a relative\n- Ask your teacher to arrange it"
+        )
+
+    if plan:
+        st.caption("Paying again adds time after your current plan ends.")
+    st.markdown("### :material/family_restroom: For parents: get Learner Plus")
+    cfg = db.payment_config()
+    if not (cfg["mtn"] or cfg["airtel"]):
+        st.warning("Payments are not open yet. Please ask your teacher.", icon=":material/info:")
+    else:
+        try:
+            reqs = db.my_payment_requests(user["id"])
+        except Exception as e:
+            reqs = []
+            st.error("Could not load your payment requests.")
+            st.caption(str(e))
+        pending = next((r for r in reqs if r["status"] == "pending"), None)
+        if pending:
+            st.success(f"Your payment code is **{pending['code']}**", icon=":material/pin:")
+            how = [f"1. Send **{_ugx(pending['amount_ugx'])}** by mobile money to:"]
+            if cfg["mtn"]:
+                how.append(f"   - MTN Mobile Money: **{cfg['mtn']}**")
+            if cfg["airtel"]:
+                how.append(f"   - Airtel Money: **{cfg['airtel']}**")
+            if cfg["name"]:
+                how.append(f"   - Name shown: **{cfg['name']}**")
+            how.append(f"2. In the reason or reference box, write **{pending['code']}**.")
+            how.append("3. Your teacher confirms the payment, usually within a day. Then press **Refresh** above.")
+            st.markdown("\n".join(how))
+            with st.form("txn_form"):
+                txn = st.text_input("Transaction ID from your mobile money message (optional, helps us find your payment)",
+                                    value=pending.get("txn_ref") or "", max_chars=40)
+                if st.form_submit_button("Save transaction ID", icon=":material/save:"):
+                    try:
+                        db.set_payment_reference(user["id"], pending["id"], txn)
+                        st.rerun()
+                    except db.DBError as e:
+                        st.error(str(e))
+            share = (f"LearnMate Learner Plus for {user['nickname']}. Send {_ugx(pending['amount_ugx'])} by mobile money to "
+                     + " or ".join(x for x in (f"MTN {cfg['mtn']}" if cfg["mtn"] else "", f"Airtel {cfg['airtel']}" if cfg["airtel"] else "") if x)
+                     + f". Write {pending['code']} as the reference.")
+            st.caption("Message to send to a parent:")
+            st.code(share, language=None)
+        else:
+            choice = st.radio(
+                "Choose a plan", list(P),
+                format_func=lambda k: f"{P[k]['label']}: {_ugx(P[k]['price'])}", key="plan_choice",
+            )
+            sib = st.checkbox("This is a second or later child in my family (half price)", key="plan_sibling")
+            st.markdown(f"**To pay: {_ugx(db.plan_price(choice, sib))}**")
+            if st.button("Get my payment code", type="primary", icon=":material/pin:"):
+                try:
+                    db.create_payment_request(user, choice, sib)
+                    st.rerun()
+                except db.DBError as e:
+                    st.error(str(e))
+        past = [r for r in reqs if r["status"] != "pending"]
+        if past:
+            with st.expander("My earlier payments", icon=":material/history:"):
+                st.dataframe(pd.DataFrame([{
+                    "Date": _date_text(r["created_at"]), "Plan": P.get(r["plan_code"], {}).get("label", r["plan_code"]),
+                    "Amount": _ugx(r["amount_ugx"]), "Code": r["code"], "Status": r["status"].title(),
+                } for r in past]), hide_index=True, use_container_width=True)
+    st.caption("Never share your mobile money PIN with anyone. LearnMate never asks for a PIN or stores a parent's phone number.")
+    st.caption(REFUND_TEXT)
+
+
+def render_teacher_payments():
+    user = current_user()
+    st.markdown("#### Payments")
+    if not db.is_payment_admin(user):
+        st.info("Only the payment administrators can confirm payments.")
+        return
+    cfg = db.payment_config()
+    if not (cfg["mtn"] or cfg["airtel"]):
+        st.warning("Payments are not open for parents yet. Add MOMO_MTN_NUMBER (and/or MOMO_AIRTEL_NUMBER, "
+                   "MOMO_ACCOUNT_NAME) to the app's secrets.", icon=":material/settings:")
+    try:
+        pending = db.list_payment_requests("pending")
+    except db.DBError as e:
+        st.error("Could not load payments. Did you run the updated SQL file in Supabase?")
+        st.caption(str(e))
+        return
+    st.markdown(f"##### Waiting for confirmation ({len(pending)})")
+    if not pending:
+        st.caption("No payments are waiting.")
+    else:
+        st.dataframe(pd.DataFrame([{
+            "Code": r["code"], "Learner": r["nickname"], "Class": r["class_level"],
+            "Plan": db.PLANS.get(r["plan_code"], {}).get("label", r["plan_code"]),
+            "Amount": _ugx(r["amount_ugx"]), "Transaction ID": r.get("txn_ref") or "", "Asked": _date_text(r["created_at"]),
+        } for r in pending]), hide_index=True, use_container_width=True)
+        st.caption("Check your mobile money message for the same amount and code, then confirm.")
+        labels = {r["id"]: f"{r['code']}: {r['nickname']} ({r['class_level']}), {_ugx(r['amount_ugx'])}" for r in pending}
+        pick = st.selectbox("Payment", list(labels), format_func=labels.get, key="pay_pick")
+        c1, c2 = st.columns(2)
+        if c1.button("Confirm: money received", type="primary", icon=":material/check_circle:"):
+            try:
+                db.confirm_payment(user, pick)
+                st.session_state["flash"] = "Payment confirmed. Learner Plus is now active."
+                st.rerun()
+            except db.DBError as e:
+                st.error(str(e))
+        note = c2.text_input("Reason if you reject", key="pay_note", max_chars=100)
+        if c2.button("Reject", icon=":material/cancel:"):
+            try:
+                db.reject_payment(user, pick, note)
+                st.session_state["flash"] = "Payment rejected."
+                st.rerun()
+            except db.DBError as e:
+                st.error(str(e))
+
+    first = datetime.datetime.now(db._KAMPALA).replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+    try:
+        total = db.confirmed_total(first)
+        active = db.list_subscriptions()
+    except db.DBError:
+        total, active = 0, []
+    st.metric("Mobile money confirmed this month", _ugx(total))
+    if active:
+        with st.expander(f"Active plans ({len(active)})", icon=":material/verified:"):
+            st.dataframe(pd.DataFrame([{
+                "Learner": a["nickname"], "Class": a["class_level"], "Source": a["source"],
+                "Plan": db.PLANS.get(a["plan_code"], {}).get("label", "School or sponsor"),
+                "Ends": _date_text(a["ends_at"]), "Reference": a.get("reference") or "",
+            } for a in active]), hide_index=True, use_container_width=True)
+
+    st.markdown("##### School or sponsor plan")
+    st.caption("Give Learner Plus to learners whose school, an NGO or a sponsor is paying.")
+    gcls = st.selectbox("Class", CLASSES, key="grant_class", format_func=class_label)
+    try:
+        group = [l for l in db.list_learners() if l["class_level"] == gcls]
+    except db.DBError:
+        group = []
+    names = {l["nickname"]: l for l in group}
+    chosen = st.multiselect("Learners", list(names), default=list(names), key=f"grant_who_{gcls}")
+    g1, g2 = st.columns(2)
+    days = g1.number_input("Days", min_value=1, max_value=400, value=92, key="grant_days")
+    ref = g2.text_input("Who is paying", key="grant_ref", max_chars=80, placeholder="For example: St. Mary's School")
+    if st.button("Give Learner Plus", icon=":material/redeem:", disabled=not chosen):
+        try:
+            db.grant_plan(user, [names[n] for n in chosen], days, ref)
+            st.session_state["flash"] = f"Learner Plus given to {len(chosen)} learner(s)."
+            st.rerun()
+        except db.DBError as e:
+            st.error(str(e))
+
+
 def render_teacher_tab():
     st.subheader(":material/cast_for_education: Teacher tools")
     flash = st.session_state.pop("flash", None)
     if flash:
         st.success(flash)
-    t_notes, t_assign, t_syllabus, t_results, t_people = st.tabs(
+    t_notes, t_assign, t_syllabus, t_results, t_pay, t_people = st.tabs(
         [":material/menu_book: Notes", ":material/assignment: Assignments", ":material/checklist: Syllabus",
-         ":material/bar_chart: Results", ":material/key: Learner passwords"]
+         ":material/bar_chart: Results", ":material/payments: Payments", ":material/key: Learner passwords"]
     )
+    with t_pay:
+        render_teacher_payments()
     with t_syllabus:
         render_teacher_syllabus()
 
@@ -2027,7 +2363,10 @@ elif ACCOUNTS_ON and current_user():
     if _pending:
         st.warning(f"You have {len(_pending)} pending assignment(s). Open the Assignments tab to see them.",
                    icon=":material/assignment_late:")
-    tab_learn, tab_quiz, tab_assign, tab_room = st.tabs([_LEARN, _QUIZ, _asg_label, _ROOM])
+    tab_learn, tab_quiz, tab_assign, tab_room, tab_plans = st.tabs(
+        [_LEARN, _QUIZ, _asg_label, _ROOM, ":material/workspace_premium: Plans"])
+    with tab_plans:
+        render_plans_tab()
     with tab_assign:
         render_assignments_tab(_pending, _done, _asg_error)
     with tab_room:
